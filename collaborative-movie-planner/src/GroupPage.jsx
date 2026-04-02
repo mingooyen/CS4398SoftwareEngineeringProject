@@ -202,16 +202,29 @@ function UpcomingCard({ session }) {
 // ── Main Page ───────────────────────────────────────────────────
 
 // ── onNavigate prop added ──
-export default function GroupPage({ onNavigate }) {
+export default function GroupPage({
+  onNavigate,
+  onLogout,
+  isSystemAdmin = false,
+  onOpenAdmin,
+}) {
   const [movies, setMovies] = useState(MOCK_RECOMMENDATIONS);
   const [scheduled, setScheduled] = useState(MOCK_SCHEDULED);
   const [activeTab, setActiveTab] = useState("recommendations");
   const [activeNav, setActiveNav] = useState("Groups");
 
-  const navItems = ["Home", "Groups", "Watchlist", "Logout"];
+  const navItems = [
+    "Home",
+    "Groups",
+    "Watchlist",
+    ...(isSystemAdmin ? ["Admin"] : []),
+    "Logout",
+  ];
   const maxVotes = Math.max(...movies.map(m => m.votes), 0);
 
   const handleVote = (movieId) => {
+    // Database integration hook:
+    // send { userId, groupId, movieId, voteType: "upvote", createdAt }.
     setMovies(prev =>
       prev.map(m =>
         m.id === movieId ? { ...m, votes: m.votes + 1, userVoted: true } : m
@@ -220,6 +233,8 @@ export default function GroupPage({ onNavigate }) {
   };
 
   const handleSchedule = ({ movie, date, time, location }) => {
+    // Database integration hook:
+    // send { groupId, movieId/title, scheduledDate, scheduledTime, location, createdByUserId }.
     setScheduled(prev => [
       ...prev,
       { id: Date.now(), title: movie, date, time, location },
@@ -230,10 +245,22 @@ export default function GroupPage({ onNavigate }) {
   // ── Routes nav clicks to the right page or tab ──
   const handleNavClick = (item) => {
     if (item === "Home") {
-      onNavigate("home");
+      onNavigate("home", { homeTab: "Home" });
+    } else if (item === "Watchlist") {
+      onNavigate("home", { homeTab: "Watchlist" });
+    } else if (item === "Logout") {
+      onLogout();
+    } else if (item === "Groups") {
+      setActiveNav("Groups");
+    } else if (item === "Admin") {
+      onOpenAdmin?.();
     } else {
       setActiveNav(item);
     }
+  };
+
+  const goHomeRoot = () => {
+    onNavigate("home", { homeTab: "Home" });
   };
 
   const sortedMovies = [...movies].sort((a, b) => b.avgRating - a.avgRating);
@@ -490,12 +517,26 @@ export default function GroupPage({ onNavigate }) {
 
       {/* NAV */}
       <nav className="nav">
-        <div className="nav-logo">MOVIE<span>NIGHT</span></div>
+        <button
+          type="button"
+          className="nav-logo"
+          onClick={goHomeRoot}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            font: "inherit",
+            padding: 0,
+            textAlign: "inherit",
+          }}
+        >
+          MOVIE<span>NIGHT</span>
+        </button>
         <div className="nav-links">
           {navItems.map(item => (
             <button
               key={item}
-              className={`nav-link ${activeNav === item ? "active" : ""}`}
+              className={`nav-link ${item === "Admin" ? "" : activeNav === item ? "active" : ""}`}
               onClick={() => handleNavClick(item)}
             >
               {item}

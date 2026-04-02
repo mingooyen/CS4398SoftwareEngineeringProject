@@ -48,11 +48,8 @@ function StarRating({ movieId, initialRating, onRate }) {
   );
 }
 
-function MovieCard({ movie, userRating, onRate, onWatchlist }) {
-  const [inWatchlist, setInWatchlist] = useState(false);
-
+function MovieCard({ movie, userRating, inWatchlist, onRate, onWatchlist }) {
   const handleWatchlist = () => {
-    setInWatchlist(!inWatchlist);
     onWatchlist(movie.id, !inWatchlist);
   };
 
@@ -84,22 +81,50 @@ function MovieCard({ movie, userRating, onRate, onWatchlist }) {
 }
 
 // ── onNavigate prop added ──
-export default function HomePage({ onNavigate }) {
+export default function HomePage({
+  onNavigate,
+  onLogout,
+  isAuthenticated,
+  isSystemAdmin = false,
+  onOpenAdmin,
+  homeNav,
+  onHomeNavChange,
+}) {
   const [query, setQuery] = useState("");
   const [ratings, setRatings] = useState({});
-  const [activeNav, setActiveNav] = useState("Home");
+  const [watchlistIds, setWatchlistIds] = useState([]);
 
-  const navItems = ["Home", "Groups", "Watchlist", "Logout"];
+  const navItems = isAuthenticated
+    ? [
+        "Home",
+        "Groups",
+        "Watchlist",
+        ...(isSystemAdmin ? ["Admin"] : []),
+        "Logout",
+      ]
+    : ["Home", "Groups", "Watchlist", "Login", "Signup"];
 
-  const filtered = MOCK_MOVIES.filter((m) =>
-    m.title.toLowerCase().includes(query.toLowerCase())
-  );
+  const sourceMovies =
+    homeNav === "Watchlist"
+      ? MOCK_MOVIES.filter((movie) => watchlistIds.includes(movie.id))
+      : MOCK_MOVIES;
+
+  const filtered = sourceMovies.filter((m) => m.title.toLowerCase().includes(query.toLowerCase()));
 
   const handleRate = (movieId, score) => {
     setRatings((prev) => ({ ...prev, [movieId]: score }));
+
+    // Database integration hook:
+    // send { userId, movieId, rating, ratedAt } to a backend ratings endpoint.
   };
 
   const handleWatchlist = (movieId, added) => {
+    setWatchlistIds((prev) =>
+      added ? [...new Set([...prev, movieId])] : prev.filter((id) => id !== movieId)
+    );
+
+    // Database integration hook:
+    // send { userId, movieId, status: "added" | "removed", updatedAt }.
     console.log(`Movie ${movieId} ${added ? "added to" : "removed from"} watchlist`);
   };
 
@@ -107,9 +132,21 @@ export default function HomePage({ onNavigate }) {
   const handleNavClick = (item) => {
     if (item === "Groups") {
       onNavigate("group");
+    } else if (item === "Logout") {
+      onLogout();
+    } else if (item === "Login") {
+      onNavigate("login");
+    } else if (item === "Signup") {
+      onNavigate("signup");
+    } else if (item === "Admin") {
+      onOpenAdmin?.();
     } else {
-      setActiveNav(item);
+      onHomeNavChange(item);
     }
+  };
+
+  const goHomeRoot = () => {
+    onNavigate("home", { homeTab: "Home" });
   };
 
   return (
@@ -355,12 +392,26 @@ export default function HomePage({ onNavigate }) {
 
       {/* NAV */}
       <nav className="nav">
-        <div className="nav-logo">MOVIE<span>NIGHT</span></div>
+        <button
+          type="button"
+          className="nav-logo"
+          onClick={goHomeRoot}
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            font: "inherit",
+            padding: 0,
+            textAlign: "inherit",
+          }}
+        >
+          MOVIE<span>NIGHT</span>
+        </button>
         <div className="nav-links">
           {navItems.map((item) => (
             <button
               key={item}
-              className={`nav-link ${activeNav === item ? "active" : ""}`}
+              className={`nav-link ${item === "Admin" ? "" : homeNav === item ? "active" : ""}`}
               onClick={() => handleNavClick(item)}
             >
               {item}
@@ -391,7 +442,7 @@ export default function HomePage({ onNavigate }) {
       {/* GRID */}
       <div className="section-header">
         <h2 className="section-title">
-          {query ? "Search Results" : "Now Showing"}
+          {query ? "Search Results" : homeNav === "Watchlist" ? "My Watchlist" : "Now Showing"}
         </h2>
         <span className="result-count">{filtered.length} movies</span>
       </div>
@@ -408,6 +459,7 @@ export default function HomePage({ onNavigate }) {
               key={movie.id}
               movie={movie}
               userRating={ratings[movie.id]}
+              inWatchlist={watchlistIds.includes(movie.id)}
               onRate={handleRate}
               onWatchlist={handleWatchlist}
             />

@@ -1,16 +1,31 @@
 import { Router } from 'express';
-import { requireAuth } from '../../../middleware/auth.js';
+import { authenticate, requireAuth } from '../../../middleware/auth.js';
+import { requireSystemAdmin } from '../../../middleware/rbac.js';
+import { asyncHandler } from '../../../middleware/async-handler.js';
 import { validateBody, validateQuery } from '../../../middleware/validate.js';
 import {
   searchQuerySchema,
   watchlistBodySchema,
   markWatchedBodySchema,
+  createCatalogMovieBodySchema,
 } from '../../../dtos/movie-dtos.js';
 import * as movieController from '../../../controllers/movie-controller.js';
 
 const router = Router();
 
+router.use(authenticate);
 router.use(requireAuth);
+
+/** Global catalog: names + poster resolution — all logged-in users. */
+router.get('/catalog', asyncHandler(movieController.listCatalog));
+/** Add to global catalog — SYSTEM_ADMIN only (see `MovieCatalogEntry` in Prisma). */
+router.post(
+  '/catalog',
+  requireSystemAdmin,
+  validateBody(createCatalogMovieBodySchema),
+  asyncHandler(movieController.createCatalogMovie)
+);
+
 router.get('/search', validateQuery(searchQuerySchema), movieController.searchMovies);
 router.get('/watchlist', movieController.getWatchlist);
 router.post('/watchlist', validateBody(watchlistBodySchema), movieController.addToWatchlist);

@@ -12,22 +12,88 @@ enum Role {
   ADMIN
 }
 
+/// Platform-wide admin: may list all groups, open any group, and patch/delete any group (same as group ADMIN for `/api/v1/groups/:groupId` admin actions). Promote in DB: UPDATE "User" SET "systemRole" = 'SYSTEM_ADMIN' WHERE email = '<admin-email>';
+enum UserSystemRole {
+  USER
+  SYSTEM_ADMIN
+}
+
+/// Global catalog movies are stored in `MovieCatalogEntry` (see model docs). SYSTEM_ADMIN may INSERT via API (POST /movies/catalog).
 model User {
-  id           String    @id @default(uuid())
-  email        String    @unique
+  id           String         @id @default(uuid())
+  email        String         @unique
   passwordHash String
   displayName  String
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  /// USER: only groups where GroupMember exists. SYSTEM_ADMIN: all groups.
+  systemRole   UserSystemRole @default(USER)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
 
-  refreshTokens   RefreshToken[]
-  userPreferences UserPreferences?
-  watchlist       WatchlistEntry[]
-  watched         WatchedEntry[]
-  groupMembers    GroupMember[]
-  createdGroups   Group[]           @relation("GroupCreator")
-  createdSessions Session[]         @relation("SessionCreator")
-  votes           Vote[]
+  refreshTokens     RefreshToken[]
+  userPreferences   UserPreferences?
+  watchlist         WatchlistEntry[]
+  watched           WatchedEntry[]
+  groupMembers      GroupMember[]
+  createdGroups     Group[]             @relation("GroupCreator")
+  createdSessions   Session[]           @relation("SessionCreator")
+  votes             Vote[]
+  catalogMoviesAdded MovieCatalogEntry[]
+}
+
+/// Row provenance: TMDB import/sync vs manually added by platform admin (custom poster/title).
+enum MovieCatalogSource {
+  TMDB
+  CUSTOM_ADMIN
+}
+
+/// DATABASE ENGINEER — global “overall list” of movies (browse + admin CRUD)
+///
+/// **Names**
+/// - `title` (required): primary display title in the app; index for search.
+/// - `originalTitle` (optional): e.g. original language title from TMDB.
+/// - Consider `pg_trgm` or full-text on `title` if you need fuzzy search at scale.
+///
+/// **Posters / photos — where to store and how to resolve a URL**
+/// Pick one strategy per row (or combine TMDB path + fallback):
+///
+/// | Field | Use when | Application resolves image as |
+/// |------|----------|--------------------------------|
+/// | `posterPath` | Movie comes from TMDB | `https://image.tmdb.org/t/p/w500` + `posterPath` (also try w185/w342 per layout). Set `source = TMDB`, set `tmdbId`. |
+/// | `customPosterUrl` | Admin pasted or backend stored a **public HTTPS URL** (CDN, Imgix, etc.) | Use URL as-is; validate origin in API if required. |
+/// | `posterStorageKey` | Your object storage (S3, GCS, Azure Blob) | Store **key only** in DB (e.g. `catalog-posters/2026/uuid.jpg`). App uses env `POSTER_CDN_BASE_URL` or signed GET URL; **do not store binary blobs in Postgres**. |
+///
+/// **Suggested ingest flow (TMDB)**
+/// 1) Admin or job searches TMDB → save `tmdbId`, `title`, `originalTitle`, `releaseYear`, `posterPath` from API, `source = TMDB`.
+/// 2) Optionally background job refreshes poster/title when TMDB updates (match on `tmdbId`).
+///
+/// **Suggested ingest flow (custom / upload)**
+/// 1) Client uploads file → API writes to object storage → save `posterStorageKey` + `title`, `source = CUSTOM_ADMIN`, `addedByUserId`.
+/// 2) Or admin provides image URL → save `customPosterUrl` after SSRF-safe fetch rules.
+///
+/// **Admin-only writes:** Gate INSERT/UPDATE/DELETE on `User.systemRole = SYSTEM_ADMIN` in the API (see `requireSystemAdmin`). Regular users read catalog for the overall list.
+model MovieCatalogEntry {
+  id        String   @id @default(uuid())
+  /// Primary UI title (always set).
+  title     String
+  originalTitle String?
+  releaseYear   Int?
+  /// When set, unique; sync metadata/images from TMDB using this id.
+  tmdbId    Int?     @unique
+  /// TMDB relative path, e.g. `/abc.jpg` — full URL built with image.tmdb.org + size segment.
+  posterPath String?
+  /// Full URL when the poster is not from TMDB (admin-linked or external CDN).
+  customPosterUrl String?
+  /// Object-storage key for uploaded poster binary (no blob in relational DB).
+  posterStorageKey String?
+  source    MovieCatalogSource @default(TMDB)
+  synopsis  String?
+  addedByUserId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addedBy User? @relation(fields: [addedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([title])
 }
 
 model RefreshToken {
