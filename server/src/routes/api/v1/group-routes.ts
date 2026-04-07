@@ -1,6 +1,8 @@
 import { Router } from 'express';
-import { requireAuth } from '../../../middleware/auth.js';
+import { authenticate, requireAuth } from '../../../middleware/auth.js';
 import { requireGroupAdmin } from '../../../middleware/rbac.js';
+import { loadGroupOnly, requireGroupParticipant } from '../../../middleware/group-access.js';
+import { asyncHandler, asyncMiddleware } from '../../../middleware/async-handler.js';
 import { validateBody } from '../../../middleware/validate.js';
 import {
   createGroupBodySchema,
@@ -13,23 +15,46 @@ import * as recommendationController from '../../../controllers/recommendation-c
 
 const router = Router();
 
+router.use(authenticate);
 router.use(requireAuth);
-router.get('/', groupController.listGroups);
-router.post('/', validateBody(createGroupBodySchema), groupController.createGroup);
-router.get('/:groupId', groupController.getGroup);
-router.patch(
-  '/:groupId',
+
+router.get('/', asyncHandler(groupController.listGroups));
+router.post(
+  '/',
+  validateBody(createGroupBodySchema),
+  asyncHandler(groupController.createGroup)
+);
+
+/** Anyone authenticated can attempt to join; being a member is not required beforehand. */
+router.post(
+  '/:groupId/join',
+  asyncMiddleware(loadGroupOnly),
+  asyncHandler(groupController.joinGroup)
+);
+
+/**
+ * Routes under /:groupId require membership (or system admin) so only participants see sessions,
+ * votes, recommendations, etc.
+ */
+const groupScoped = Router({ mergeParams: true });
+groupScoped.use(asyncMiddleware(requireGroupParticipant));
+groupScoped.get('/', asyncHandler(groupController.getGroup));
+groupScoped.patch(
+  '/',
   requireGroupAdmin,
   validateBody(updateGroupBodySchema),
-  groupController.updateGroup
+  asyncHandler(groupController.updateGroup)
 );
-router.delete('/:groupId', requireGroupAdmin, groupController.deleteGroup);
-router.post('/:groupId/join', groupController.joinGroup);
-router.post('/:groupId/leave', groupController.leaveGroup);
-router.get('/:groupId/members', groupController.getGroupMembers);
-router.get('/:groupId/recommendations', recommendationController.getGroupRecommendations);
+groupScoped.delete('/', requireGroupAdmin, asyncHandler(groupController.deleteGroup));
+groupScoped.post('/leave', asyncHandler(groupController.leaveGroup));
+groupScoped.get('/members', asyncHandler(groupController.getGroupMembers));
+groupScoped.get(
+  '/recommendations',
+  asyncHandler(recommendationController.getGroupRecommendations)
+);
+groupScoped.use('/sessions/:sessionId/votes', voteRoutes);
+groupScoped.use('/sessions', sessionRoutes);
 
-router.use('/:groupId/sessions/:sessionId/votes', voteRoutes);
-router.use('/:groupId/sessions', sessionRoutes);
+router.use('/:groupId', groupScoped);
 
 export default router;

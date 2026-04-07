@@ -7,5 +7,11 @@ export const updateProfileBodySchema = z.object({
 
 export const preferencesQuerySchema = z.object({});
 
+export const searchUsersQuerySchema = z.object({
+  q: z.string().min(1),
+  limit: z.coerce.number().int().min(1).max(50).optional(),
+});
+
 export type UpdateProfileBody = z.infer<typeof updateProfileBodySchema>;
 export type PreferencesQuery = z.infer<typeof preferencesQuerySchema>;
+export type SearchUsersQuery = z.infer<typeof searchUsersQuerySchema>;

@@ -1,3 +1,8 @@
+/**
+ * TMDB images: store only `posterPath` in the database (e.g. `/xYz.jpg`). Resolve for browsers with
+ * `TMDB_IMAGE_BASE` + size (e.g. w500): `${base}${posterPath}`. Same pattern as `resolveCatalogPosterUrl` in
+ * `movie-service.ts` for `MovieCatalogEntry`.
+ */
 export interface TmdbSearchResult {
   id: number;
   title: string;
