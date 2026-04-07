@@ -1,15 +1,27 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  acceptInvite,
+  acceptFriendRequest,
+  DEFAULT_GROUPS,
+  denyFriendRequest,
+  normalizeName,
+  readFriendRequests,
+  readGroups,
+  readInvites,
+  writeGroups,
+  writeFriendRequests,
+  writeInvites,
+} from "./groupDataStore.js";
 
 // Mock data — replace with API calls
-const MOCK_GROUP = {
-  id: 1,
-  name: "Friday Night Crew",
-  members: [
-    { id: 1, name: "Mi", avatar: "M", role: "creator" },
-    { id: 2, name: "Xavier", avatar: "X", role: "member" },
-    { id: 3, name: "Nivah", avatar: "N", role: "member" },
-  ],
-};
+const MOCK_GROUP = DEFAULT_GROUPS[0];
+const MOCK_PEOPLE = [
+  { id: "p-1", name: "Mi", avatar: "M", source: "friend", inGroups: ["Friday Night Crew"] },
+  { id: "p-2", name: "Jordan", avatar: "J", source: "other-group", inGroups: ["Saturday Sci-Fi Club"] },
+  { id: "p-3", name: "Alex", avatar: "A", source: "other-group", inGroups: ["Saturday Sci-Fi Club"] },
+  { id: "p-4", name: "Nivah", avatar: "N", source: "friend", inGroups: ["Friday Night Crew"] },
+  { id: "p-5", name: "Terry", avatar: "T", source: "other-group", inGroups: ["Saturday Sci-Fi Club"] },
+];
 
 const MOCK_RECOMMENDATIONS = [
   {
@@ -69,18 +81,6 @@ const MOCK_SCHEDULED = [
 ];
 
 // ── Sub-components ──────────────────────────────────────────────
-
-function MemberBadge({ member }) {
-  return (
-    <div className="member-badge" title={member.name}>
-      <div className={`avatar ${member.role === "creator" ? "creator" : ""}`}>
-        {member.avatar}
-      </div>
-      <span className="member-name">{member.name}</span>
-      {member.role === "creator" && <span className="crown">👑</span>}
-    </div>
-  );
-}
 
 function VoteBar({ votes, max }) {
   const pct = max > 0 ? (votes / max) * 100 : 0;
@@ -205,22 +205,86 @@ function UpcomingCard({ session }) {
 export default function GroupPage({
   onNavigate,
   onLogout,
+  highlightedName = "",
+  groupTabConfig,
   isSystemAdmin = false,
   onOpenAdmin,
 }) {
+  const currentUserName = highlightedName?.trim() || "You";
+  const currentUserAvatar = currentUserName.charAt(0).toUpperCase();
   const [movies, setMovies] = useState(MOCK_RECOMMENDATIONS);
   const [scheduled, setScheduled] = useState(MOCK_SCHEDULED);
   const [activeTab, setActiveTab] = useState("recommendations");
+  const [activeGroupTab, setActiveGroupTab] = useState(
+    groupTabConfig?.defaultTab ?? "groups"
+  );
   const [activeNav, setActiveNav] = useState("Groups");
+  const [allGroups, setAllGroups] = useState(() => readGroups());
+  const [selectedGroupId, setSelectedGroupId] = useState("g-1");
+  const [newGroupName, setNewGroupName] = useState("");
+  const [groupInvites, setGroupInvites] = useState(() => readInvites());
+  const [friendRequests, setFriendRequests] = useState(() => readFriendRequests());
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteQuery, setInviteQuery] = useState("");
 
   const navItems = [
     "Home",
+    "Friends",
     "Groups",
     "Watchlist",
     ...(isSystemAdmin ? ["Admin"] : []),
     "Logout",
   ];
   const maxVotes = Math.max(...movies.map(m => m.votes), 0);
+  const groupTabs = groupTabConfig?.tabs ?? [
+    { id: "groups", label: "Groups" },
+    { id: "create-group", label: "Create Group" },
+  ];
+  const activeGroup =
+    allGroups.find((group) => group.id === selectedGroupId) ?? allGroups[0] ?? DEFAULT_GROUPS[0];
+  const creatorMember = activeGroup?.members.find((member) => member.role === "creator");
+  const isCreator =
+    Boolean(creatorMember) &&
+    normalizeName(creatorMember.name) === normalizeName(currentUserName);
+  const canManageGroup = isSystemAdmin || isCreator;
+  const visibleInvites = groupInvites.filter(
+    (invite) => normalizeName(invite.invitedUserName) === normalizeName(currentUserName)
+  );
+  const visibleFriendRequests = friendRequests.filter(
+    (req) => normalizeName(req.targetUserName) === normalizeName(currentUserName)
+  );
+  const normalizedInvite = inviteQuery.trim().toLowerCase();
+  const inviteCandidates = MOCK_PEOPLE.filter((person) => {
+    const alreadyMember = activeGroup?.members.some(
+      (member) => normalizeName(member.name) === normalizeName(person.name)
+    );
+    if (alreadyMember) return false;
+    if (!normalizedInvite) return true;
+    return (
+      person.name.toLowerCase().includes(normalizedInvite) ||
+      person.inGroups.some((group) => group.toLowerCase().includes(normalizedInvite))
+    );
+  });
+  useEffect(() => {
+    if (groupTabConfig?.defaultTab) {
+      setActiveGroupTab(groupTabConfig.defaultTab);
+    }
+  }, [groupTabConfig?.defaultTab]);
+  useEffect(() => {
+    if (!canManageGroup && inviteOpen) {
+      setInviteOpen(false);
+    }
+  }, [canManageGroup, inviteOpen]);
+  useEffect(() => {
+    writeGroups(allGroups);
+  }, [allGroups]);
+  useEffect(() => {
+    writeInvites(groupInvites);
+  }, [groupInvites]);
+  useEffect(() => {
+    writeFriendRequests(friendRequests);
+  }, [friendRequests]);
 
   const handleVote = (movieId) => {
     // Database integration hook:
@@ -252,6 +316,8 @@ export default function GroupPage({
       onLogout();
     } else if (item === "Groups") {
       setActiveNav("Groups");
+    } else if (item === "Friends") {
+      setInviteOpen(true);
     } else if (item === "Admin") {
       onOpenAdmin?.();
     } else {
@@ -261,6 +327,96 @@ export default function GroupPage({
 
   const goHomeRoot = () => {
     onNavigate("home", { homeTab: "Home" });
+  };
+  const handleCreateGroup = () => {
+    const nextName = newGroupName.trim();
+    if (!nextName) return;
+    setAllGroups((prev) => [
+      ...prev,
+      {
+        id: `g-${Date.now()}`,
+        name: nextName,
+        members: [
+          {
+            id: Date.now(),
+            name: currentUserName,
+            avatar: currentUserAvatar,
+            role: "creator",
+          },
+        ],
+      },
+    ]);
+    setNewGroupName("");
+    setActiveGroupTab("groups");
+  };
+  const handleDeleteGroup = (groupId) => {
+    const targetGroup = allGroups.find((group) => group.id === groupId);
+    if (!targetGroup) return;
+    const targetCreator = targetGroup.members.find((member) => member.role === "creator");
+    const canDeleteTarget =
+      isSystemAdmin ||
+      (targetCreator &&
+        normalizeName(targetCreator.name) === normalizeName(currentUserName));
+    if (!canDeleteTarget) return;
+
+    setAllGroups((prev) => {
+      const remaining = prev.filter((group) => group.id !== groupId);
+      if (selectedGroupId === groupId && remaining.length > 0) {
+        setSelectedGroupId(remaining[0].id);
+      }
+      return remaining;
+    });
+  };
+  const handleRemoveMember = (groupId, memberId) => {
+    setAllGroups((prev) =>
+      prev.map((group) => {
+        if (group.id !== groupId) return group;
+        return {
+          ...group,
+          members: group.members.filter((member) => member.id !== memberId),
+        };
+      })
+    );
+  };
+  const handleInviteMember = (person) => {
+    if (!activeGroup) return;
+    const alreadyMember = activeGroup.members.some(
+      (member) => normalizeName(member.name) === normalizeName(person.name)
+    );
+    if (alreadyMember) return;
+    const duplicateInvite = groupInvites.some(
+      (invite) =>
+        invite.groupId === activeGroup.id &&
+        normalizeName(invite.invitedUserName) === normalizeName(person.name)
+    );
+    if (duplicateInvite) return;
+    setGroupInvites((prev) => [
+      ...prev,
+      {
+        id: `gi-${Date.now()}-${person.id}`,
+        groupId: activeGroup.id,
+        groupName: activeGroup.name,
+        invitedUserName: person.name,
+        inviterName: currentUserName,
+      },
+    ]);
+  };
+  const handleJoinInvite = (inviteId) => {
+    acceptInvite(inviteId, currentUserName);
+    setAllGroups(readGroups());
+    setGroupInvites(readInvites());
+  };
+  const handleDenyInvite = (inviteId) => {
+    writeInvites(groupInvites.filter((item) => item.id !== inviteId));
+    setGroupInvites(readInvites());
+  };
+  const handleAcceptFriendRequest = (requestId) => {
+    acceptFriendRequest(requestId);
+    setFriendRequests(readFriendRequests());
+  };
+  const handleDenyFriendRequest = (requestId) => {
+    denyFriendRequest(requestId);
+    setFriendRequests(readFriendRequests());
   };
 
   const sortedMovies = [...movies].sort((a, b) => b.avgRating - a.avgRating);
@@ -281,6 +437,95 @@ export default function GroupPage({
           display: flex; align-items: center; justify-content: space-between;
           padding: 0 40px; height: 64px;
         }
+        .nav-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          position: relative;
+        }
+        .notif-btn {
+          width: 36px;
+          height: 36px;
+          border-radius: 10px;
+          border: 1px solid #2e2e2e;
+          background: #141414;
+          color: #d2d2d2;
+          cursor: pointer;
+          position: relative;
+          font-size: 16px;
+        }
+        .notif-btn:hover { border-color: #4a4a4a; color: #f0ece4; }
+        .notif-badge {
+          position: absolute;
+          top: -6px;
+          right: -6px;
+          min-width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          background: #e74c3c;
+          color: #fff;
+          border: 2px solid #0d0d0d;
+          font-size: 10px;
+          line-height: 14px;
+          text-align: center;
+          padding: 0 3px;
+        }
+        .notif-panel {
+          position: absolute;
+          top: 44px;
+          left: 0;
+          width: min(420px, calc(100vw - 40px));
+          background: #121212;
+          border: 1px solid #2a2a2a;
+          border-radius: 12px;
+          box-shadow: 0 18px 40px rgba(0,0,0,0.45);
+          padding: 12px;
+          z-index: 120;
+        }
+        .notif-title {
+          font-size: 12px;
+          color: #8f8f8f;
+          text-transform: uppercase;
+          letter-spacing: 1px;
+          margin-bottom: 10px;
+        }
+        .notif-empty { font-size: 13px; color: #666; padding: 6px 2px; }
+        .notif-item {
+          border: 1px solid #232323;
+          border-radius: 10px;
+          padding: 10px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 8px;
+          margin-bottom: 8px;
+          background: #111;
+        }
+        .notif-item:last-child { margin-bottom: 0; }
+        .notif-meta { display: flex; align-items: center; gap: 10px; min-width: 0; }
+        .notif-text { min-width: 0; }
+        .notif-main {
+          font-size: 13px;
+          color: #e4e4e4;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+        .notif-sub {
+          font-size: 11px;
+          color: #7a7a7a;
+        }
+        .notif-actions { display: flex; gap: 6px; }
+        .notif-approve, .notif-deny {
+          padding: 6px 9px;
+          border-radius: 7px;
+          font-size: 11px;
+          cursor: pointer;
+          border: 1px solid transparent;
+          background: transparent;
+        }
+        .notif-approve { border-color: #2f6f95; color: #9fd4ff; }
+        .notif-deny { border-color: #6a2e2e; color: #ff9d9d; }
         .nav-logo { font-family: 'Bebas Neue', sans-serif; font-size: 26px; letter-spacing: 2px; color: #e8c547; }
         .nav-logo span { color: #f0ece4; }
         .nav-links { display: flex; gap: 8px; }
@@ -308,8 +553,6 @@ export default function GroupPage({
           font-size: clamp(36px, 5vw, 56px);
           letter-spacing: 2px; color: #f0ece4; line-height: 1;
         }
-        .members-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
-        .member-badge { display: flex; align-items: center; gap: 6px; }
         .avatar {
           width: 34px; height: 34px; border-radius: 50%;
           background: #1e1e1e; border: 1px solid #2e2e2e;
@@ -317,7 +560,11 @@ export default function GroupPage({
           font-size: 13px; font-weight: 500; color: #888;
         }
         .avatar.creator { border-color: #e8c547; color: #e8c547; }
-        .member-name { font-size: 13px; color: #666; }
+        .avatar.current-user {
+          border-color: #58a6ff;
+          color: #9fd4ff;
+          box-shadow: 0 0 0 2px rgba(88,166,255,0.25);
+        }
         .crown { font-size: 11px; }
 
         .invite-btn {
@@ -328,11 +575,219 @@ export default function GroupPage({
           align-self: flex-start; margin-top: 8px;
         }
         .invite-btn:hover { border-color: #e8c547; color: #e8c547; }
+        .invite-overlay {
+          position: fixed;
+          inset: 0;
+          z-index: 210;
+          background: rgba(0, 0, 0, 0.72);
+          display: grid;
+          place-items: center;
+          padding: 20px;
+        }
+        .invite-modal {
+          width: min(620px, 100%);
+          max-height: 85vh;
+          overflow: auto;
+          background: #121212;
+          border: 1px solid #2a2a2a;
+          border-radius: 12px;
+          padding: 18px;
+        }
+        .invite-head {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+        }
+        .invite-title { font-size: 17px; color: #f0ece4; }
+        .invite-close {
+          background: #1e1e1e;
+          color: #bbb;
+          border: 1px solid #343434;
+          border-radius: 8px;
+          width: 34px;
+          height: 34px;
+          cursor: pointer;
+        }
+        .invite-search {
+          width: 100%;
+          background: #161616;
+          border: 1px solid #2a2a2a;
+          border-radius: 8px;
+          color: #f0ece4;
+          padding: 10px 12px;
+          font-size: 14px;
+          margin-bottom: 14px;
+        }
+        .invite-list {
+          display: grid;
+          gap: 10px;
+        }
+        .invite-person {
+          border: 1px solid #252525;
+          border-radius: 10px;
+          background: #111;
+          padding: 10px;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 10px;
+        }
+        .invite-person-meta {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .invite-person-name { color: #f0ece4; font-size: 14px; }
+        .invite-person-sub { color: #7b7b7b; font-size: 12px; }
+        .invite-add-btn {
+          border: 1px solid #2f6f95;
+          color: #9fd4ff;
+          background: transparent;
+          border-radius: 8px;
+          padding: 8px 10px;
+          cursor: pointer;
+          font-size: 12px;
+        }
 
         .tabs {
           display: flex; gap: 4px;
           padding: 32px 40px 0;
           border-bottom: 1px solid #1e1e1e;
+        }
+        .group-tabs {
+          display: flex;
+          gap: 8px;
+          padding: 24px 40px 0;
+          border-bottom: 1px solid #1e1e1e;
+        }
+        .group-tab {
+          background: none;
+          border: none;
+          cursor: pointer;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          color: #777;
+          padding: 10px 14px;
+          border-radius: 8px;
+          transition: color 0.2s, background 0.2s;
+        }
+        .group-tab.active {
+          background: rgba(232,197,71,0.12);
+          color: #e8c547;
+        }
+        .groups-list {
+          display: grid;
+          grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+          gap: 14px;
+        }
+        .group-card {
+          background: #121212;
+          border: 1px solid #222;
+          border-radius: 10px;
+          padding: 0;
+          position: relative;
+          overflow: hidden;
+        }
+        .group-enter-card {
+          width: 100%;
+          height: 100%;
+          text-align: left;
+          background: #121212;
+          border: none;
+          border-radius: 0;
+          padding: 14px;
+          cursor: pointer;
+          display: block;
+        }
+        .group-enter-card:hover {
+          border-color: #2f6f95;
+          background: #151515;
+        }
+        .group-enter-card.active {
+          border-color: #2f5f95;
+          box-shadow: 0 0 0 1px rgba(47, 95, 149, 0.35);
+        }
+        .group-card-actions {
+          position: absolute;
+          top: 10px;
+          right: 10px;
+          z-index: 3;
+        }
+        .group-delete-btn {
+          padding: 6px 10px;
+          border: 1px solid #7a2b2b;
+          border-radius: 7px;
+          background: transparent;
+          color: #ff8f8f;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .group-delete-btn:hover {
+          border-color: #c43b3b;
+          color: #ffc1c1;
+          background: rgba(196, 59, 59, 0.08);
+        }
+        .group-card-title { font-size: 15px; color: #f0ece4; margin-bottom: 6px; }
+        .group-card-meta { font-size: 12px; color: #7a7a7a; }
+        .member-card {
+          background: #121212;
+          border: 1px solid #222;
+          border-radius: 10px;
+          padding: 12px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+        }
+        .member-card-left {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+        .member-card-name { font-size: 14px; color: #f0ece4; }
+        .member-card-name .crown-inline { margin-left: 6px; }
+        .member-card-role { font-size: 11px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.7px; }
+        .member-remove-btn {
+          padding: 6px 10px;
+          border: 1px solid #444;
+          border-radius: 7px;
+          background: transparent;
+          color: #bdbdbd;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .member-remove-btn:hover {
+          border-color: #c43b3b;
+          color: #ffc1c1;
+          background: rgba(196, 59, 59, 0.08);
+        }
+        .create-group-panel {
+          background: #111;
+          border: 1px solid #1e1e1e;
+          border-radius: 12px;
+          padding: 18px;
+          max-width: 520px;
+        }
+        .create-group-panel h3 { margin-bottom: 10px; font-size: 15px; color: #f0ece4; }
+        .create-group-panel input {
+          width: 100%;
+          background: #161616;
+          border: 1px solid #2a2a2a;
+          border-radius: 8px;
+          color: #f0ece4;
+          font-size: 14px;
+          padding: 10px 12px;
+          margin-bottom: 12px;
+        }
+        .create-group-panel button {
+          padding: 10px 14px;
+          border: 1px solid #e8c547;
+          background: transparent;
+          color: #e8c547;
+          border-radius: 8px;
+          cursor: pointer;
         }
         .tab {
           background: none; border: none; cursor: pointer;
@@ -517,21 +972,104 @@ export default function GroupPage({
 
       {/* NAV */}
       <nav className="nav">
-        <button
-          type="button"
-          className="nav-logo"
-          onClick={goHomeRoot}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            font: "inherit",
-            padding: 0,
-            textAlign: "inherit",
-          }}
-        >
-          MOVIE<span>NIGHT</span>
-        </button>
+        <div className="nav-left">
+          <button
+            type="button"
+            className="notif-btn"
+            aria-label="Notifications"
+            onClick={() => setNotificationsOpen((prev) => !prev)}
+          >
+            🔔
+              {visibleInvites.length + visibleFriendRequests.length > 0 ? (
+                <span className="notif-badge">{visibleInvites.length + visibleFriendRequests.length}</span>
+            ) : null}
+          </button>
+          {notificationsOpen ? (
+            <div className="notif-panel">
+              <p className="notif-title">Group Invites</p>
+              {visibleInvites.length === 0 ? (
+                <p className="notif-empty">No pending invites for you.</p>
+              ) : (
+                visibleInvites.map((invite) => (
+                  <div key={invite.id} className="notif-item">
+                    <div className="notif-meta">
+                      <div className="avatar">{invite.groupName.charAt(0)}</div>
+                      <div className="notif-text">
+                        <p className="notif-main">You are invited to join</p>
+                        <p className="notif-sub">
+                          {invite.groupName} - Invited by {invite.inviterName}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="notif-actions">
+                      <button
+                        type="button"
+                        className="notif-approve"
+                        onClick={() => handleJoinInvite(invite.id)}
+                      >
+                        Join
+                      </button>
+                      <button
+                        type="button"
+                        className="notif-deny"
+                        onClick={() => handleDenyInvite(invite.id)}
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+              <p className="notif-title" style={{ marginTop: "12px" }}>Friend Requests</p>
+              {visibleFriendRequests.length === 0 ? (
+                <p className="notif-empty">No friend requests.</p>
+              ) : (
+                visibleFriendRequests.map((req) => (
+                  <div key={req.id} className="notif-item">
+                    <div className="notif-meta">
+                      <div className="avatar">{req.requesterName.charAt(0)}</div>
+                      <div className="notif-text">
+                        <p className="notif-main">{req.requesterName} sent you a friend request</p>
+                        <p className="notif-sub">Requester ID: {req.requesterId}</p>
+                      </div>
+                    </div>
+                    <div className="notif-actions">
+                      <button
+                        type="button"
+                        className="notif-approve"
+                        onClick={() => handleAcceptFriendRequest(req.id)}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="notif-deny"
+                        onClick={() => handleDenyFriendRequest(req.id)}
+                      >
+                        Deny
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          ) : null}
+          <button
+            type="button"
+            className="nav-logo"
+            onClick={goHomeRoot}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              font: "inherit",
+              padding: 0,
+              textAlign: "inherit",
+            }}
+          >
+            MOVIE<span>NIGHT</span>
+          </button>
+        </div>
         <div className="nav-links">
           {navItems.map(item => (
             <button
@@ -549,17 +1087,74 @@ export default function GroupPage({
       <header className="page-header">
         <div className="group-meta">
           <span className="group-label">Group</span>
-          <h1 className="group-name">{MOCK_GROUP.name}</h1>
-          <div className="members-row">
-            {MOCK_GROUP.members.map(m => (
-              <MemberBadge key={m.id} member={m} />
-            ))}
+          <h1 className="group-name">{activeGroup?.name ?? MOCK_GROUP.name}</h1>
+        </div>
+        {canManageGroup ? (
+          <button className="invite-btn" type="button" onClick={() => setInviteOpen(true)}>
+            + Invite Member
+          </button>
+        ) : null}
+      </header>
+      {inviteOpen && canManageGroup ? (
+        <div className="invite-overlay" onClick={() => setInviteOpen(false)}>
+          <div className="invite-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="invite-head">
+              <h3 className="invite-title">Invite Member to {activeGroup?.name}</h3>
+              <button className="invite-close" type="button" onClick={() => setInviteOpen(false)}>
+                ×
+              </button>
+            </div>
+            <input
+              className="invite-search"
+              type="text"
+              placeholder="Search friends or people from other groups..."
+              value={inviteQuery}
+              onChange={(event) => setInviteQuery(event.target.value)}
+            />
+            <div className="invite-list">
+              {inviteCandidates.map((person) => (
+                <div className="invite-person" key={person.id}>
+                  <div className="invite-person-meta">
+                    <div className="avatar">{person.avatar}</div>
+                    <div>
+                      <p className="invite-person-name">{person.name}</p>
+                      <p className="invite-person-sub">
+                        {person.source === "friend" ? "Friend" : "Other groups"} - {person.inGroups.join(", ")}
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="invite-add-btn"
+                    onClick={() => handleInviteMember(person)}
+                  >
+                    Send invite
+                  </button>
+                </div>
+              ))}
+              {inviteCandidates.length === 0 ? (
+                <div className="group-card">
+                  <p className="group-card-meta">No matching people found.</p>
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
-        <button className="invite-btn">+ Invite Member</button>
-      </header>
+      ) : null}
 
       {/* TABS */}
+      <div className="group-tabs">
+        {groupTabs.map((tab) => (
+          <button
+            key={tab.id}
+            className={`group-tab ${activeGroupTab === tab.id ? "active" : ""}`}
+            onClick={() => setActiveGroupTab(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      {activeGroupTab === "groups" ? (
       <div className="tabs">
         {[
           { id: "recommendations", label: "🎬 Recommendations" },
@@ -575,11 +1170,110 @@ export default function GroupPage({
           </button>
         ))}
       </div>
+      ) : null}
 
       {/* CONTENT */}
       <main className="content">
+        {activeGroupTab === "groups" ? (
+          <div className="section-intro">
+            <h2 className="section-heading">Your Groups</h2>
+          </div>
+        ) : null}
+        {activeGroupTab === "groups" ? (
+          <>
+            <div className="groups-list" style={{ marginBottom: "26px" }}>
+              {allGroups.map((group) => (
+                <div className="group-card" key={group.id}>
+                  <div className="group-card-actions">
+                    {(() => {
+                      const groupCreator = group.members.find((member) => member.role === "creator");
+                      const canDelete =
+                        isSystemAdmin ||
+                        (groupCreator &&
+                          normalizeName(groupCreator.name) === normalizeName(currentUserName));
+                      return canDelete ? (
+                        <button
+                          type="button"
+                          className="group-delete-btn"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handleDeleteGroup(group.id);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      ) : null;
+                    })()}
+                  </div>
+                  <button
+                    type="button"
+                    className={`group-enter-card ${selectedGroupId === group.id ? "active" : ""}`}
+                    onClick={() => {
+                      setSelectedGroupId(group.id);
+                      setActiveGroupTab("groups");
+                    }}
+                  >
+                    <p className="group-card-title">{group.name}</p>
+                    <p className="group-card-meta">{group.members.length} members</p>
+                  </button>
+                </div>
+              ))}
+            </div>
+            {activeGroup ? (
+              <div className="section-intro" style={{ marginTop: "8px" }}>
+                <h2 className="section-heading">Members in {activeGroup.name}</h2>
+              </div>
+            ) : null}
+            {activeGroup ? (
+              <div className="groups-list" style={{ marginBottom: "26px" }}>
+                {activeGroup.members.map((member) => (
+                  <div className="member-card" key={`${activeGroup.id}-${member.id}`}>
+                    <div className="member-card-left">
+                      <div
+                        className={`avatar ${member.role === "creator" ? "creator" : ""} ${
+                          normalizeName(member.name) === normalizeName(currentUserName) ? "current-user" : ""
+                        }`}
+                      >
+                        {member.avatar}
+                      </div>
+                      <div>
+                        <p className="member-card-name">
+                          {member.name}
+                          {member.role === "creator" ? (
+                            <span className="crown-inline" title="Group creator">👑</span>
+                          ) : null}
+                        </p>
+                        <p className="member-card-role">{member.role}</p>
+                      </div>
+                    </div>
+                    {canManageGroup && member.role !== "creator" ? (
+                      <button
+                        type="button"
+                        className="member-remove-btn"
+                        onClick={() => handleRemoveMember(activeGroup.id, member.id)}
+                      >
+                        Remove
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="create-group-panel">
+            <h3>Create Group</h3>
+            <input
+              type="text"
+              placeholder="Enter group name..."
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+            />
+            <button type="button" onClick={handleCreateGroup}>Create Group</button>
+          </div>
+        )}
 
-        {activeTab === "recommendations" && (
+        {activeGroupTab === "groups" && activeTab === "recommendations" && (
           <>
             <div className="section-intro">
               <h2 className="section-heading">Top Picks for Your Group</h2>
@@ -593,7 +1287,7 @@ export default function GroupPage({
           </>
         )}
 
-        {activeTab === "vote" && (
+        {activeGroupTab === "groups" && activeTab === "vote" && (
           <>
             <div className="section-intro">
               <h2 className="section-heading">Cast Your Vote</h2>
@@ -607,7 +1301,7 @@ export default function GroupPage({
           </>
         )}
 
-        {activeTab === "schedule" && (
+        {activeGroupTab === "groups" && activeTab === "schedule" && (
           <>
             <ScheduleForm onSchedule={handleSchedule} />
             <div className="section-intro" style={{ marginTop: "8px" }}>

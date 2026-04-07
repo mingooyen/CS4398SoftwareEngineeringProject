@@ -21,6 +21,8 @@ enum UserSystemRole {
 /// Global catalog movies are stored in `MovieCatalogEntry` (see model docs). SYSTEM_ADMIN may INSERT via API (POST /movies/catalog).
 model User {
   id           String         @id @default(uuid())
+  /// Human-facing numeric id for search/invite UX. Starts at 1.
+  numericId    BigInt         @unique @default(autoincrement()) @db.BigInt
   email        String         @unique
   passwordHash String
   displayName  String
@@ -170,6 +172,42 @@ model GroupMember {
   @@index([groupId])
   @@index([userId])
 }
+
+/// DATABASE ENGINEER — group invite recommendations (friends + other-group users)
+///
+/// Recommended persistent design for the Invite Member popup:
+/// 1) Friend graph
+///    - table: `Friendship`
+///    - fields: `id`, `requesterUserId`, `addresseeUserId`, `status` (PENDING|ACCEPTED|BLOCKED),
+///      `createdAt`, `updatedAt`
+///    - constraints: unique unordered pair (A,B), indexes on requester/addressee/status.
+///    - tracking friend IDs list:
+///      - for each user, derive `friendUserIds` from ACCEPTED rows where the user is requester or addressee.
+///      - return this as `friendIds: string[]` (or numericId[]) in profile/friends APIs.
+///      - optional optimization: maintain a materialized/cache table keyed by `userId` with `friendIds` array.
+///
+/// 2) Group invitations
+///    - table: `GroupInvite`
+///    - fields: `id`, `groupId`, `inviterUserId`, `inviteeUserId`, `status` (PENDING|ACCEPTED|DECLINED|EXPIRED),
+///      `createdAt`, `updatedAt`, `expiresAt?`
+///    - constraints: unique pending invite per (groupId, inviteeUserId), indexes on invitee/status and group/status.
+///
+/// 3) API contract for popup
+///    - GET `/api/v1/groups/:groupId/invite-candidates?q=` should return:
+///      { candidates: [{ userId, displayName, avatarUrl?, source: 'friend'|'other-group', mutualGroupNames: string[] }] }
+///    - ranking suggestion:
+///      a) accepted friends first,
+///      b) then users from overlapping groups,
+///      c) exclude current members and blocked users.
+///
+/// 4) Add/remove member endpoints (creator/admin-only)
+///    - POST `/api/v1/groups/:groupId/invites` (create invite),
+///    - POST `/api/v1/groups/:groupId/members/:userId/remove` (remove member),
+///    - enforce: only group creator or platform SYSTEM_ADMIN may remove/delete.
+///
+/// 5) Remove frontend mock data when backend is connected
+///    - Delete `MOCK_FRIENDS`, `MOCK_GROUP_INVITES`, and localStorage fallback branches in frontend.
+///    - Source the Friends tab entirely from DB-backed endpoints (`/api/v1/users/search`, friendship APIs).
 
 model Session {
   id           String    @id @default(uuid())

@@ -6,6 +6,13 @@ export async function listGroups(req: Request, res: Response): Promise<void> {
   const systemRole: UserSystemRole = req.systemRole ?? 'USER';
   const groups = await groupService.listForUser(req.userId!, systemRole);
   res.json({
+    // UI metadata for requested group subtabs.
+    groupTabs: [
+      { id: 'groups', label: 'Groups' },
+      { id: 'create-group', label: 'Create Group' },
+    ],
+    defaultGroupTab: 'groups',
+    canCreateGroup: true,
     groups: groups.map((g) => ({
       id: g.id,
       name: g.name,

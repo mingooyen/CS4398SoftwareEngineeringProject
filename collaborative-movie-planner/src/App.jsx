@@ -11,6 +11,14 @@ function App() {
   const [authMode, setAuthMode] = useState("login");
   const [session, setSession] = useState(() => getStoredSession());
   const [adminModalOpen, setAdminModalOpen] = useState(false);
+  const [highlightedName, setHighlightedName] = useState(() => session?.fullName ?? "");
+  const [groupTabConfig, setGroupTabConfig] = useState({
+    tabs: [
+      { id: "groups", label: "Groups" },
+      { id: "create-group", label: "Create Group" },
+    ],
+    defaultTab: "groups",
+  });
 
   const isAuthed = Boolean(session?.isAuthenticated);
   const isSystemAdmin = Boolean(session?.isSystemAdmin);
@@ -20,6 +28,38 @@ function App() {
       setAdminModalOpen(false);
     }
   }, [isSystemAdmin]);
+
+  useEffect(() => {
+    setHighlightedName(session?.fullName ?? "");
+  }, [session?.fullName]);
+
+  useEffect(() => {
+    const accessToken = session?.accessToken;
+    if (!isAuthed || !accessToken) return;
+
+    const headers = { Authorization: `Bearer ${accessToken}` };
+
+    fetch("http://localhost:3000/api/v1/users/me", { headers })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload?.user?.highlightedName) {
+          setHighlightedName(payload.user.highlightedName);
+        }
+      })
+      .catch(() => {});
+
+    fetch("http://localhost:3000/api/v1/groups", { headers })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (Array.isArray(payload?.groupTabs) && payload.groupTabs.length > 0) {
+          setGroupTabConfig({
+            tabs: payload.groupTabs,
+            defaultTab: payload.defaultGroupTab ?? payload.groupTabs[0].id,
+          });
+        }
+      })
+      .catch(() => {});
+  }, [isAuthed, session?.accessToken]);
 
   const protectedPage = useMemo(() => page === "group", [page]);
   const authPageSelected = useMemo(() => page === "login" || page === "signup", [page]);
@@ -73,6 +113,8 @@ function App() {
           />
         ) : null}
         <GroupPage
+          highlightedName={highlightedName}
+          groupTabConfig={groupTabConfig}
           isSystemAdmin={isSystemAdmin}
           onOpenAdmin={() => setAdminModalOpen(true)}
           onNavigate={(next, meta) => {
@@ -103,6 +145,8 @@ function App() {
         />
       ) : null}
       <HomePage
+        highlightedName={highlightedName}
+        accessToken={session?.accessToken ?? ""}
         isAuthenticated={isAuthed}
         isSystemAdmin={isSystemAdmin}
         onOpenAdmin={() => setAdminModalOpen(true)}
