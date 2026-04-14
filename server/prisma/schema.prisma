@@ -73,6 +73,10 @@ enum MovieCatalogSource {
 /// 2) Or admin provides image URL → save `customPosterUrl` after SSRF-safe fetch rules.
 ///
 /// **Admin-only writes:** Gate INSERT/UPDATE/DELETE on `User.systemRole = SYSTEM_ADMIN` in the API (see `requireSystemAdmin`). Regular users read catalog for the overall list.
+///
+/// **Recommendations**
+/// - `genre` — free-text label (e.g. Drama, Sci-Fi); `GET /api/v1/groups/:groupId/recommendations` scores catalog rows against the union of group members’ `UserPreferences.favoriteGenres`.
+/// - `adminNotes` — ops/ingest notes; not shown in public browse unless you expose them in API.
 model MovieCatalogEntry {
   id        String   @id @default(uuid())
   /// Primary UI title (always set).
@@ -87,6 +91,10 @@ model MovieCatalogEntry {
   customPosterUrl String?
   /// Object-storage key for uploaded poster binary (no blob in relational DB).
   posterStorageKey String?
+  /// Primary genre label for browse and group recommendations (match against UserPreferences.favoriteGenres).
+  genre     String?
+  /// Internal/admin-only notes (ingest, moderation, storage key hints). Not required for TMDB rows.
+  adminNotes String?
   source    MovieCatalogSource @default(TMDB)
   synopsis  String?
   addedByUserId String?

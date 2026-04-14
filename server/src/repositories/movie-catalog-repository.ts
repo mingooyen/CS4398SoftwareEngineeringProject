@@ -9,6 +9,8 @@ export type CreateMovieCatalogData = {
   posterPath?: string | null;
   customPosterUrl?: string | null;
   posterStorageKey?: string | null;
+  genre?: string | null;
+  adminNotes?: string | null;
   source: MovieCatalogSource;
   synopsis?: string | null;
   addedByUserId?: string | null;
@@ -30,6 +32,8 @@ export function create(data: CreateMovieCatalogData): Promise<MovieCatalogEntry>
       posterPath: data.posterPath,
       customPosterUrl: data.customPosterUrl,
       posterStorageKey: data.posterStorageKey,
+      genre: data.genre,
+      adminNotes: data.adminNotes,
       source: data.source,
       synopsis: data.synopsis,
       addedByUserId: data.addedByUserId,
