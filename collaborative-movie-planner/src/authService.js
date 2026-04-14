@@ -62,6 +62,51 @@ const emptyActivity = () => ({
   },
 });
 
+/** Default genre tastes for seeded demo users (group recommendations when prefs are empty). */
+const SEED_DEFAULT_GENRES = {
+  "mnp.seed.admin": ["Documentary", "Drama"],
+  "mnp.seed.mi": ["Comedy", "Romance"],
+  "mnp.seed.xavier": ["Drama", "Sci-Fi"],
+  "mnp.seed.nivah": ["Thriller", "Drama"],
+};
+
+function normalizeName(value = "") {
+  return value.trim().toLowerCase();
+}
+
+/**
+ * Directory entries for Friends UI (all demo accounts). IDs are stable mock numeric strings.
+ */
+export function getDemoDirectoryPeople() {
+  return DEMO_ACCOUNTS.map((a, i) => ({
+    id: String(3001 + i),
+    displayName: a.displayName,
+    source: "Directory",
+  }));
+}
+
+/**
+ * Genre preferences for recommendations: stored activity or seed defaults.
+ */
+export function getGenrePreferencesForDisplayName(displayName) {
+  const usersById = loadUserTable();
+  const user = Object.values(usersById).find(
+    (u) => normalizeName(u.fullName) === normalizeName(displayName)
+  );
+  const fromDb = user?.activity?.preferences?.genres;
+  if (Array.isArray(fromDb) && fromDb.length > 0) {
+    return fromDb;
+  }
+  if (user?.userId && SEED_DEFAULT_GENRES[user.userId]) {
+    return SEED_DEFAULT_GENRES[user.userId];
+  }
+  const seed = SEED_USERS.find((s) => normalizeName(s.fullName) === normalizeName(displayName));
+  if (seed && SEED_DEFAULT_GENRES[seed.userId]) {
+    return SEED_DEFAULT_GENRES[seed.userId];
+  }
+  return ["Drama"];
+}
+
 export function getLoginKey(user) {
   return (user.username ?? user.fullName).trim().toLowerCase();
 }
@@ -71,10 +116,40 @@ function ensureSeedUsers(usersById) {
   for (const seed of SEED_USERS) {
     const existing = usersById[seed.userId];
     if (!existing || !existing.username || existing.isSystemAdmin == null) {
+      const baseActivity = existing?.activity ?? emptyActivity();
+      const defaultGenres = SEED_DEFAULT_GENRES[seed.userId] ?? [];
+      const mergedPrefs = {
+        ...baseActivity.preferences,
+        genres:
+          Array.isArray(baseActivity.preferences?.genres) &&
+          baseActivity.preferences.genres.length > 0
+            ? baseActivity.preferences.genres
+            : defaultGenres,
+      };
       usersById[seed.userId] = {
         ...seed,
         updatedAt: new Date().toISOString(),
-        activity: existing?.activity ?? emptyActivity(),
+        activity: {
+          ...baseActivity,
+          preferences: mergedPrefs,
+        },
+      };
+      changed = true;
+    } else if (
+      (!existing.activity?.preferences?.genres ||
+        existing.activity.preferences.genres.length === 0) &&
+      SEED_DEFAULT_GENRES[seed.userId]?.length
+    ) {
+      usersById[seed.userId] = {
+        ...existing,
+        activity: {
+          ...existing.activity,
+          preferences: {
+            ...existing.activity.preferences,
+            genres: SEED_DEFAULT_GENRES[seed.userId],
+          },
+        },
+        updatedAt: new Date().toISOString(),
       };
       changed = true;
     }

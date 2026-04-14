@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   acceptInvite,
   acceptFriendRequest,
@@ -12,6 +12,8 @@ import {
   sendFriendRequest,
   writeFriendNotifications,
 } from "./groupDataStore.js";
+import { getDemoDirectoryPeople } from "./authService.js";
+import { isUserBannedForFriend } from "./adminDataStore.js";
 
 // Mock movie data — replace with TMDB/OMDB API calls
 
@@ -31,6 +33,7 @@ const MOCK_FRIENDS = [
   { id: "1002", displayName: "Jordan", source: "Other Group" },
   { id: "1003", displayName: "Alex", source: "Other Group" },
   { id: "1004", displayName: "Nivah", source: "Friend" },
+  { id: "1005", displayName: "Xavier", source: "Friend" },
 ];
 
 function StarRating({ movieId, initialRating, onRate }) {
@@ -112,6 +115,7 @@ export default function HomePage({
   onOpenAdmin,
   homeNav,
   onHomeNavChange,
+  adminTick = 0,
 }) {
   const [query, setQuery] = useState("");
   const [ratings, setRatings] = useState({});
@@ -122,7 +126,27 @@ export default function HomePage({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [friendsQuery, setFriendsQuery] = useState("");
-  const [friendResults, setFriendResults] = useState(MOCK_FRIENDS);
+  const [friendResults, setFriendResults] = useState([]);
+  const isSelfFriend = (name = "") =>
+    normalizeName(name) === normalizeName(highlightedName || "");
+
+  const mergedFriendDirectory = useMemo(() => {
+    const demo = getDemoDirectoryPeople();
+    const mock = MOCK_FRIENDS;
+    const byName = new Map();
+    for (const d of demo) {
+      byName.set(normalizeName(d.displayName), { ...d });
+    }
+    for (const m of mock) {
+      const k = normalizeName(m.displayName);
+      byName.set(k, { ...m, id: m.id });
+    }
+    return [...byName.values()].filter(
+      (f) =>
+        normalizeName(f.displayName) !== normalizeName(highlightedName || "") &&
+        !isUserBannedForFriend(f)
+    );
+  }, [highlightedName, adminTick]);
   const visibleInvites = groupInvites.filter(
     (invite) => normalizeName(invite.invitedUserName) === normalizeName(highlightedName || "")
   );
@@ -230,12 +254,12 @@ export default function HomePage({
     if (!friendsOpen) return;
     const q = friendsQuery.trim();
     if (!q) {
-      setFriendResults(MOCK_FRIENDS);
+      setFriendResults(mergedFriendDirectory);
       return;
     }
 
     if (!accessToken) {
-      const fallback = MOCK_FRIENDS.filter(
+      const fallback = mergedFriendDirectory.filter(
         (friend) =>
           friend.displayName.toLowerCase().includes(q.toLowerCase()) ||
           String(friend.id).toLowerCase().includes(q.toLowerCase())
@@ -260,8 +284,10 @@ export default function HomePage({
               displayName: user.displayName,
               source: known?.source ?? "Directory",
             };
-          });
-          const fallbackMatches = MOCK_FRIENDS.filter(
+          }).filter(
+            (user) => !isSelfFriend(user.displayName) && !isUserBannedForFriend(user)
+          );
+          const fallbackMatches = mergedFriendDirectory.filter(
             (friend) =>
               friend.displayName.toLowerCase().includes(q.toLowerCase()) ||
               String(friend.id).toLowerCase().includes(q.toLowerCase())
@@ -279,7 +305,7 @@ export default function HomePage({
         }
       })
       .catch(() => {});
-  }, [friendsOpen, friendsQuery, accessToken]);
+  }, [friendsOpen, friendsQuery, accessToken, highlightedName, mergedFriendDirectory]);
 
   return (
     <>

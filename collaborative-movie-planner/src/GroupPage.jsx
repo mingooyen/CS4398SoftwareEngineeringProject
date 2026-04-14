@@ -12,6 +12,7 @@ import {
   writeFriendRequests,
   writeInvites,
 } from "./groupDataStore.js";
+import { computeGroupRecommendations } from "./recommendationUtils.js";
 
 // Mock data — replace with API calls
 const MOCK_GROUP = DEFAULT_GROUPS[0];
@@ -21,6 +22,7 @@ const MOCK_PEOPLE = [
   { id: "p-3", name: "Alex", avatar: "A", source: "other-group", inGroups: ["Saturday Sci-Fi Club"] },
   { id: "p-4", name: "Nivah", avatar: "N", source: "friend", inGroups: ["Friday Night Crew"] },
   { id: "p-5", name: "Terry", avatar: "T", source: "other-group", inGroups: ["Saturday Sci-Fi Club"] },
+  { id: "p-6", name: "Xavier", avatar: "X", source: "friend", inGroups: ["Friday Night Crew"] },
 ];
 
 const MOCK_RECOMMENDATIONS = [
@@ -128,7 +130,7 @@ function RecommendationCard({ movie, maxVotes, onVote }) {
   );
 }
 
-function ScheduleForm({ onSchedule }) {
+function ScheduleForm({ onSchedule, movies }) {
   const [selectedMovie, setSelectedMovie] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
@@ -148,7 +150,7 @@ function ScheduleForm({ onSchedule }) {
           <label>Movie</label>
           <select value={selectedMovie} onChange={e => setSelectedMovie(e.target.value)}>
             <option value="">Select a movie...</option>
-            {MOCK_RECOMMENDATIONS.map(m => (
+            {(movies ?? []).map(m => (
               <option key={m.id} value={m.title}>{m.title}</option>
             ))}
           </select>
@@ -209,10 +211,16 @@ export default function GroupPage({
   groupTabConfig,
   isSystemAdmin = false,
   onOpenAdmin,
+  adminTick = 0,
 }) {
   const currentUserName = highlightedName?.trim() || "You";
   const currentUserAvatar = currentUserName.charAt(0).toUpperCase();
-  const [movies, setMovies] = useState(MOCK_RECOMMENDATIONS);
+  const [movies, setMovies] = useState(() =>
+    computeGroupRecommendations(
+      DEFAULT_GROUPS.find((g) => g.id === "g-1") ?? DEFAULT_GROUPS[0],
+      MOCK_RECOMMENDATIONS
+    )
+  );
   const [scheduled, setScheduled] = useState(MOCK_SCHEDULED);
   const [activeTab, setActiveTab] = useState("recommendations");
   const [activeGroupTab, setActiveGroupTab] = useState(
@@ -285,6 +293,10 @@ export default function GroupPage({
   useEffect(() => {
     writeFriendRequests(friendRequests);
   }, [friendRequests]);
+
+  useEffect(() => {
+    setMovies(computeGroupRecommendations(activeGroup, MOCK_RECOMMENDATIONS));
+  }, [activeGroup?.id, adminTick]);
 
   const handleVote = (movieId) => {
     // Database integration hook:
@@ -1214,7 +1226,11 @@ export default function GroupPage({
                     }}
                   >
                     <p className="group-card-title">{group.name}</p>
-                    <p className="group-card-meta">{group.members.length} members</p>
+                    <p className="group-card-meta">
+                      ID: <code style={{ color: "#a8a8a8" }}>{group.id}</code>
+                      {" · "}
+                      {group.members.length} members
+                    </p>
                   </button>
                 </div>
               ))}
@@ -1277,7 +1293,7 @@ export default function GroupPage({
           <>
             <div className="section-intro">
               <h2 className="section-heading">Top Picks for Your Group</h2>
-              <span className="sort-note">Sorted by avg group rating</span>
+              <span className="sort-note">Ranked by genre match to members&apos; tastes + admin catalog</span>
             </div>
             <div className="rec-grid">
               {sortedMovies.map(movie => (
@@ -1303,7 +1319,7 @@ export default function GroupPage({
 
         {activeGroupTab === "groups" && activeTab === "schedule" && (
           <>
-            <ScheduleForm onSchedule={handleSchedule} />
+            <ScheduleForm onSchedule={handleSchedule} movies={movies} />
             <div className="section-intro" style={{ marginTop: "8px" }}>
               <h2 className="section-heading">Upcoming Sessions</h2>
             </div>

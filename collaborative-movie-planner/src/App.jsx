@@ -6,6 +6,7 @@ import AdminControlsModal from "./AdminControlsModal.jsx";
 import { clearSession, getStoredSession, loginUser, registerUser } from "./authService.js";
 
 function App() {
+  const [adminTick, setAdminTick] = useState(0);
   const [page, setPage] = useState("home");
   const [homeNav, setHomeNav] = useState("Home");
   const [authMode, setAuthMode] = useState("login");
@@ -110,6 +111,8 @@ function App() {
             open={adminModalOpen}
             onClose={() => setAdminModalOpen(false)}
             session={session}
+            accessToken={session?.accessToken ?? ""}
+            onAdminAction={() => setAdminTick((t) => t + 1)}
           />
         ) : null}
         <GroupPage
@@ -117,6 +120,7 @@ function App() {
           groupTabConfig={groupTabConfig}
           isSystemAdmin={isSystemAdmin}
           onOpenAdmin={() => setAdminModalOpen(true)}
+          adminTick={adminTick}
           onNavigate={(next, meta) => {
             if (meta?.homeTab) {
               setHomeNav(meta.homeTab);
@@ -142,11 +146,14 @@ function App() {
           open={adminModalOpen}
           onClose={() => setAdminModalOpen(false)}
           session={session}
+          accessToken={session?.accessToken ?? ""}
+          onAdminAction={() => setAdminTick((t) => t + 1)}
         />
       ) : null}
       <HomePage
         highlightedName={highlightedName}
         accessToken={session?.accessToken ?? ""}
+        adminTick={adminTick}
         isAuthenticated={isAuthed}
         isSystemAdmin={isSystemAdmin}
         onOpenAdmin={() => setAdminModalOpen(true)}

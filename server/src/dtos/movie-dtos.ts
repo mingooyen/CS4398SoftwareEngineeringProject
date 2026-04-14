@@ -9,6 +9,8 @@ export const createCatalogMovieBodySchema = z.object({
   posterPath: z.string().optional(),
   customPosterUrl: z.string().url().optional(),
   posterStorageKey: z.string().min(1).optional(),
+  genre: z.string().min(1).optional(),
+  adminNotes: z.string().optional(),
   source: z.enum(['TMDB', 'CUSTOM_ADMIN']).optional(),
   synopsis: z.string().optional(),
 });
