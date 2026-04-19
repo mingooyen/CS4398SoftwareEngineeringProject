@@ -26,8 +26,16 @@ export const discoverQuerySchema = z.object({
   region: z.string().length(2).optional(),
   page: z.coerce.number().int().min(1).max(20).optional(),
   limit: z.coerce.number().int().min(1).max(150).optional(),
-  /** TMDB discover `sort_by`. Popular-by-stars uses `vote_average.desc`. */
-  sortBy: z.enum(['popularity.desc', 'vote_average.desc']).optional(),
+  /** TMDB discover `sort_by` (subset we expose for Now Showing–style lists). */
+  sortBy: z
+    .enum([
+      'popularity.desc',
+      'vote_average.desc',
+      'release_date.desc',
+      'revenue.desc',
+      'vote_count.desc',
+    ])
+    .optional(),
   /** TMDB `vote_count.gte` — use with vote_average sort so obscure 1-vote “10★” titles are excluded. */
   voteCountGte: z.coerce.number().int().min(0).max(50000).optional(),
 });

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptInvite,
   acceptFriendRequest,
@@ -13,9 +13,26 @@ import {
   writeFriendNotifications,
 } from "./groupDataStore.js";
 import { isUserBannedForFriend } from "./adminDataStore.js";
-import { getGenrePreferencesForDisplayName } from "./authService.js";
 import { buildOfflineMovies } from "./offlineCatalog.js";
 import { createPosterErrorHandler, makePosterDataUri } from "./posterUtils.js";
+
+/** Now Showing row: preset id → TMDB discover when no genre chip is selected. */
+const HOME_BROWSE_PRESETS = [
+  { id: "foryou", label: "For you" },
+  { id: "trending", label: "Trending" },
+  {
+    id: "popular",
+    label: "Popular ★",
+    title: "Sorted by TMDB average rating with a minimum vote count so obscure one-vote titles are filtered out.",
+  },
+  { id: "newest", label: "New releases", title: "Newest premiere dates first (TMDB release date)." },
+  {
+    id: "boxoffice",
+    label: "Top box office",
+    title: "By reported worldwide revenue on TMDB when the database has figures for a title.",
+  },
+  { id: "mostvotes", label: "Most reviewed", title: "Titles with the largest number of TMDB user votes." },
+];
 
 function StarRating({ movieId, initialRating, onRate }) {
   const [hovered, setHovered] = useState(0);
@@ -27,7 +44,7 @@ function StarRating({ movieId, initialRating, onRate }) {
   };
 
   return (
-    <div style={{ display: "flex", gap: "2px", justifyContent: "center" }}>
+    <div className="card-star-row">
       {[1, 2, 3, 4, 5].map((star) => (
         <button
           key={star}
@@ -101,15 +118,19 @@ function MovieCard({ movie, userRating, inWatchlist, onRate, onWatchlist, isAuth
             ? `Watch on: ${movie.providers.map((p) => p.providerName).slice(0, 3).join(", ")}`
             : "Watch providers unavailable"}
         </p>
-        <div className="card-divider" />
-        <p className="rate-label">Your Rating</p>
-        {isAuthenticated ? (
-          <StarRating movieId={movie.id} initialRating={userRating} onRate={onRate} />
-        ) : (
-          <button type="button" className="login-rate-btn" onClick={onLoginClick}>
-            Log in to rate
-          </button>
-        )}
+        <div className="card-rating-section">
+          <div className="card-divider" />
+          <p className="rate-label">Your Rating</p>
+          <div className="card-rating-row">
+            {isAuthenticated ? (
+              <StarRating movieId={movie.id} initialRating={userRating} onRate={onRate} />
+            ) : (
+              <button type="button" className="login-rate-btn" onClick={onLoginClick}>
+                Log in to rate
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -140,7 +161,11 @@ export default function HomePage({
   const [friendResults, setFriendResults] = useState([]);
   const [movies, setMovies] = useState([]);
   const [browseGenres, setBrowseGenres] = useState([]);
-  /** foryou | popular when no genre chip is selected */
+  /** Logged-in user: `GET /users/me/preferences` → favoriteGenres */
+  const [savedFavoriteGenres, setSavedFavoriteGenres] = useState([]);
+  /** Latest TMDB genre id[] per movie id (ref only—avoid discover refetch loops). */
+  const movieGenresByIdRef = useRef({});
+  /** Preset from HOME_BROWSE_PRESETS when no genre chip is selected */
   const [browsePreset, setBrowsePreset] = useState("foryou");
   /** When set, list is filtered to this TMDB genre name (Action, Drama, …). */
   const [selectedGenreName, setSelectedGenreName] = useState(null);
@@ -313,21 +338,72 @@ export default function HomePage({
   }, []);
 
   useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      setSavedFavoriteGenres([]);
+      return;
+    }
+    fetch("http://localhost:3000/api/v1/users/me/preferences", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        const g = payload?.preferences?.favoriteGenres;
+        setSavedFavoriteGenres(Array.isArray(g) ? g.filter(Boolean) : []);
+      })
+      .catch(() => setSavedFavoriteGenres([]));
+  }, [isAuthenticated, accessToken, highlightedName]);
+
+  const mergeForYouGenreNames = useCallback((idLookup) => {
+    if (!isAuthenticated) return [];
+    const idToName = new Map(browseGenres.map((g) => [Number(g.id), g.name]));
+    const fromPrefs = (savedFavoriteGenres || []).filter(Boolean);
+    const merged = [...fromPrefs];
+    const seen = new Set(merged.map((x) => x.toLowerCase()));
+    for (const [movieId, score] of Object.entries(ratings)) {
+      if (Number(score) < 4) continue;
+      const gids = idLookup(String(movieId));
+      if (!Array.isArray(gids)) continue;
+      for (const gid of gids) {
+        const name = idToName.get(Number(gid));
+        if (!name) continue;
+        const k = name.toLowerCase();
+        if (seen.has(k)) continue;
+        seen.add(k);
+        merged.push(name);
+      }
+    }
+    return merged;
+  }, [isAuthenticated, browseGenres, savedFavoriteGenres, ratings]);
+
+  const forYouTasteLabels = useMemo(
+    () =>
+      mergeForYouGenreNames((movieId) => {
+        const m = movies.find((x) => String(x.id) === movieId);
+        return m?.genres;
+      }),
+    [mergeForYouGenreNames, movies]
+  );
+
+  useEffect(() => {
     setHomeVisibleCount(HOME_PAGE_CHUNK);
   }, [homeNav, browsePreset, selectedGenreName, highlightedName, query]);
 
   useEffect(() => {
-    const preferenceGenres = getGenrePreferencesForDisplayName(highlightedName || "");
     let browseNames = [];
     let sortBy = null;
     if (homeNav === "Home") {
       if (selectedGenreName) {
         browseNames = [selectedGenreName];
-      } else if (browsePreset === "popular") {
-        browseNames = [];
-        sortBy = "vote_average.desc";
+      } else if (browsePreset === "foryou") {
+        browseNames = mergeForYouGenreNames((id) => movieGenresByIdRef.current[id]);
+        if (!browseNames.length) sortBy = "popularity.desc";
       } else {
-        browseNames = preferenceGenres;
+        browseNames = [];
+        if (browsePreset === "trending") sortBy = "popularity.desc";
+        else if (browsePreset === "popular") sortBy = "vote_average.desc";
+        else if (browsePreset === "newest") sortBy = "release_date.desc";
+        else if (browsePreset === "boxoffice") sortBy = "revenue.desc";
+        else if (browsePreset === "mostvotes") sortBy = "vote_count.desc";
       }
     }
 
@@ -338,10 +414,23 @@ export default function HomePage({
     q.set("limit", String(fetchLimit));
     if (sortBy) {
       q.set("sortBy", sortBy);
-      q.set("voteCountGte", "300");
+      if (sortBy === "vote_average.desc") q.set("voteCountGte", "300");
     }
 
-    const offlineStars = !selectedGenreName && browsePreset === "popular";
+    let offlineSort = "default";
+    if (!selectedGenreName) {
+      if (browsePreset === "popular") offlineSort = "rating";
+      else if (browsePreset === "newest") offlineSort = "year";
+      else if (browsePreset === "mostvotes" || browsePreset === "boxoffice") offlineSort = "rating";
+    }
+
+    const applyMovieMeta = (list) => {
+      const next = { ...movieGenresByIdRef.current };
+      for (const m of list) {
+        next[String(m.id)] = Array.isArray(m.genres) ? m.genres : [];
+      }
+      movieGenresByIdRef.current = next;
+    };
 
     fetch(`http://localhost:3000/api/v1/movies/discover?${q.toString()}`)
       .then((res) => (res.ok ? res.json() : null))
@@ -355,12 +444,30 @@ export default function HomePage({
           seen.add(k);
           dedup.push(m);
         }
-        setMovies(dedup.length ? dedup : buildOfflineMovies(browseNames, fetchLimit, offlineStars));
+        if (dedup.length) {
+          applyMovieMeta(dedup);
+          setMovies(dedup);
+        } else {
+          const offlineList = buildOfflineMovies(browseNames, fetchLimit, offlineSort);
+          applyMovieMeta(offlineList);
+          setMovies(offlineList);
+        }
       })
       .catch(() => {
-        setMovies(buildOfflineMovies(browseNames, fetchLimit, offlineStars));
+        const offlineList = buildOfflineMovies(browseNames, fetchLimit, offlineSort);
+        applyMovieMeta(offlineList);
+        setMovies(offlineList);
       });
-  }, [highlightedName, homeNav, browsePreset, selectedGenreName]);
+  }, [
+    mergeForYouGenreNames,
+    isAuthenticated,
+    savedFavoriteGenres,
+    ratings,
+    browseGenres,
+    homeNav,
+    browsePreset,
+    selectedGenreName,
+  ]);
 
   return (
     <>
@@ -568,19 +675,6 @@ export default function HomePage({
           background: radial-gradient(ellipse 60% 50% at 50% 0%, rgba(232,197,71,0.06) 0%, transparent 70%);
           pointer-events: none;
         }
-        .hero-tag {
-          display: inline-block;
-          font-size: 11px;
-          font-weight: 500;
-          letter-spacing: 3px;
-          text-transform: uppercase;
-          color: #e8c547;
-          background: rgba(232,197,71,0.08);
-          border: 1px solid rgba(232,197,71,0.2);
-          padding: 5px 14px;
-          border-radius: 20px;
-          margin-bottom: 20px;
-        }
         .hero-title {
           font-family: 'Bebas Neue', sans-serif;
           font-size: clamp(52px, 8vw, 96px);
@@ -654,11 +748,16 @@ export default function HomePage({
         }
         .now-filter-tabs {
           display: flex;
-          flex-wrap: wrap;
+          flex-wrap: nowrap;
           gap: 8px;
           margin-bottom: 12px;
+          overflow-x: auto;
+          padding-bottom: 6px;
+          -webkit-overflow-scrolling: touch;
+          scrollbar-color: #3a3a3a #141414;
         }
         .now-filter-tab {
+          flex-shrink: 0;
           border: 1px solid #2e2e2e;
           background: #141414;
           color: #9a9a9a;
@@ -676,6 +775,55 @@ export default function HomePage({
           border-color: #e8c547;
           color: #e8c547;
           background: rgba(232,197,71,0.08);
+        }
+        .foryou-meta {
+          margin-bottom: 12px;
+        }
+        .foryou-guest-hint {
+          font-size: 13px;
+          color: #9a9a9a;
+          line-height: 1.45;
+          max-width: 720px;
+        }
+        .foryou-login-link {
+          background: none;
+          border: none;
+          color: #e8c547;
+          cursor: pointer;
+          text-decoration: underline;
+          font: inherit;
+          padding: 0;
+        }
+        .foryou-login-link:hover {
+          color: #f5dc7a;
+        }
+        .foryou-taste-line {
+          font-size: 13px;
+          color: #b8b8b8;
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          align-items: center;
+          line-height: 1.5;
+        }
+        .foryou-taste-muted {
+          color: #777;
+        }
+        .foryou-taste-label {
+          color: #888;
+          margin-right: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          font-size: 11px;
+        }
+        .foryou-taste-chip {
+          display: inline-block;
+          padding: 4px 10px;
+          border-radius: 999px;
+          border: 1px solid #3a3a3a;
+          background: #161616;
+          color: #e8c547;
+          font-size: 12px;
         }
         .genre-chip-row {
           display: flex;
@@ -740,6 +888,7 @@ export default function HomePage({
           grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
           gap: 24px;
           padding: 0 40px 80px;
+          align-items: stretch;
         }
 
         .movie-card {
@@ -749,6 +898,9 @@ export default function HomePage({
           border: 1px solid #1e1e1e;
           transition: transform 0.25s, box-shadow 0.25s, border-color 0.25s;
           cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          height: 100%;
         }
         .movie-card:hover {
           transform: translateY(-6px);
@@ -798,7 +950,13 @@ export default function HomePage({
         .watchlist-btn.active { background: rgba(255,255,255,0.9); }
         .watchlist-btn:hover { background: #e8c547; }
 
-        .card-info { padding: 14px 14px 18px; }
+        .card-info {
+          padding: 14px 14px 18px;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          min-height: 0;
+        }
         .card-year { font-size: 11px; color: #555; letter-spacing: 1px; margin-bottom: 4px; }
         .card-title {
           font-size: 15px;
@@ -814,17 +972,41 @@ export default function HomePage({
         .card-tmdb { font-size: 13px; color: #888; margin-bottom: 2px; }
         .card-provider { font-size: 11px; color: #6f6f6f; min-height: 28px; margin-bottom: 4px; }
         .tmdb-star { color: #f5c518; }
+        .card-rating-section {
+          margin-top: auto;
+        }
         .card-divider { height: 1px; background: #1e1e1e; margin: 12px 0 10px; }
         .rate-label { font-size: 11px; color: #555; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 6px; text-align: center; }
+        .card-rating-row {
+          min-height: 34px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        .card-star-row {
+          display: flex;
+          gap: 2px;
+          justify-content: center;
+          align-items: center;
+          min-height: 34px;
+        }
         .login-rate-btn {
           width: 100%;
-          padding: 8px;
+          min-height: 34px;
+          padding: 6px 8px;
+          box-sizing: border-box;
           border: 1px solid #2f6f95;
           border-radius: 8px;
           background: transparent;
           color: #9fd4ff;
           font-size: 12px;
+          font-family: 'DM Sans', sans-serif;
           cursor: pointer;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+          line-height: 1.2;
         }
 
         .empty {
@@ -964,7 +1146,6 @@ export default function HomePage({
 
       {/* HERO + SEARCH */}
       <section className="hero">
-        <div className="hero-tag">🎬 Group Picks</div>
         <h1 className="hero-title">
           PICK YOUR<br /><em>NEXT</em> WATCH
         </h1>
@@ -999,32 +1180,52 @@ export default function HomePage({
 
       {homeNav === "Home" && !query.trim() ? (
         <div className="now-filters-wrap">
-          <div className="now-filter-tabs">
-            <button
-              type="button"
-              className={`now-filter-tab ${!selectedGenreName && browsePreset === "foryou" ? "active" : ""}`}
-              onClick={() => {
-                setBrowsePreset("foryou");
-                setSelectedGenreName(null);
-              }}
-            >
-              For you
-            </button>
-            <button
-              type="button"
-              className={`now-filter-tab ${!selectedGenreName && browsePreset === "popular" ? "active" : ""}`}
-              title="Sorted by average star rating (TMDB), with enough votes to be credible"
-              onClick={() => {
-                setBrowsePreset("popular");
-                setSelectedGenreName(null);
-              }}
-            >
-              Popular ★
-            </button>
+          <div className="now-filter-tabs" aria-label="Now Showing list presets">
+            {HOME_BROWSE_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`now-filter-tab ${!selectedGenreName && browsePreset === p.id ? "active" : ""}`}
+                title={p.title}
+                onClick={() => {
+                  setBrowsePreset(p.id);
+                  setSelectedGenreName(null);
+                }}
+              >
+                {p.label}
+              </button>
+            ))}
           </div>
+          {homeNav === "Home" && !query.trim() && browsePreset === "foryou" && !selectedGenreName ? (
+            <div className="foryou-meta">
+              {!isAuthenticated ? (
+                <p className="foryou-guest-hint">
+                  <strong>For you</strong> uses your saved favorite genres and titles you rate 4★ or higher.{" "}
+                  <button type="button" className="foryou-login-link" onClick={() => onNavigate("login")}>
+                    Log in
+                  </button>{" "}
+                  to personalize this list. Until then, you will see the same broad picks as Trending.
+                </p>
+              ) : forYouTasteLabels.length > 0 ? (
+                <p className="foryou-taste-line">
+                  <span className="foryou-taste-label">Your For you mix</span>
+                  {forYouTasteLabels.map((name) => (
+                    <span key={name} className="foryou-taste-chip">
+                      {name}
+                    </span>
+                  ))}
+                </p>
+              ) : (
+                <p className="foryou-taste-line foryou-taste-muted">
+                  Add favorite genres to your account or rate any title here 4★+—until then, we are showing general
+                  trending-style picks.
+                </p>
+              )}
+            </div>
+          ) : null}
           <div>
             <p className="genre-chip-hint">
-              Filter Now Showing by genre or theme — scroll sideways for more chips.
+              Pick a list above, then narrow with genre or theme chips — scroll sideways for more.
             </p>
             <div className="genre-chip-row">
               {[...(browseGenres.length ? browseGenres : [])]

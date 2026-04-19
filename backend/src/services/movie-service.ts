@@ -197,6 +197,44 @@ const FALLBACK_MOVIES: {
   { id: 693134, title: 'Dune: Part Two', year: 2024, rating: 8.1, genre: 'Sci-Fi', posterPath: '/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg' },
   { id: 299536, title: 'Avengers: Infinity War', year: 2018, rating: 8.2, genre: 'Action', posterPath: '/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg' },
   { id: 346364, title: 'It', year: 2017, rating: 7.2, genre: 'Horror', posterPath: '/9E2y5Q7WlCVNEhP5GiVTjhEhx1o.jpg' },
+  { id: 597, title: 'Titanic', year: 1997, rating: 7.9, genre: 'Romance', posterPath: '/9xjZS2rlNxm24GLRxRuf4fbxDWE.jpg' },
+  { id: 807, title: 'Se7en', year: 1995, rating: 8.3, genre: 'Thriller', posterPath: '/zrSOTwsmupQiOuwABP01AgM4YLf.jpg' },
+  { id: 240, title: 'The Godfather Part II', year: 1974, rating: 9.0, genre: 'Drama', posterPath: '/AmYrVwFmtdCzvI8QMQWjanbKQzM.jpg' },
+  { id: 1124, title: 'The Prestige', year: 2006, rating: 8.5, genre: 'Thriller', posterPath: '/bdN3gXu1rAlAwCqP2T5W99RKBax.jpg' },
+  { id: 77, title: 'Memento', year: 2000, rating: 8.4, genre: 'Thriller', posterPath: '/yuNs09hYgeWSlgrAVGLzHG9lAMz.jpg' },
+  { id: 857, title: 'Saving Private Ryan', year: 1998, rating: 8.6, genre: 'War', posterPath: '/miDo9l7YDLh7Z4gg7n61QzF6w9B.jpg' },
+  { id: 85, title: 'Raiders of the Lost Ark', year: 1981, rating: 8.4, genre: 'Adventure', posterPath: '/ceG9VCzoXuLf173BwlwvTAnsJP0.jpg' },
+  { id: 280, title: 'Terminator 2: Judgment Day', year: 1991, rating: 8.6, genre: 'Sci-Fi', posterPath: '/5M0j0B18abgBI9Fp2Vqp1nUKrgS.jpg' },
+  { id: 348, title: 'Alien', year: 1979, rating: 8.4, genre: 'Horror', posterPath: '/vfrQk5IPloGG1Nr9F5EPbACKhzy.jpg' },
+  { id: 679, title: 'Aliens', year: 1986, rating: 8.4, genre: 'Sci-Fi', posterPath: '/hzCaSFLT9yq4RoCKdDUkoOKTWm0.jpg' },
+  { id: 137, title: 'Groundhog Day', year: 1993, rating: 8.0, genre: 'Comedy', posterPath: '/gCgt1BALMPrmpl5vt4Db0A9cqVF.jpg' },
+  { id: 808, title: 'Shrek', year: 2001, rating: 8.0, genre: 'Animation', posterPath: '/iujYostCZil2Vxn56JDmvJmgwtW.jpg' },
+  { id: 12, title: 'Finding Nemo', year: 2003, rating: 8.2, genre: 'Animation', posterPath: '/eHuGQ10FUz5AnhYEQpGUBUrlT3b.jpg' },
+  { id: 8587, title: 'The Lion King', year: 1994, rating: 8.5, genre: 'Animation', posterPath: '/sKCr78MXSLixwmZ8DyJLrpMcd15.jpg' },
+  { id: 354912, title: 'Coco', year: 2017, rating: 8.4, genre: 'Animation', posterPath: '/gGEsBPAijhUUFJDgdcdJHZ4SnMp.jpg' },
+  { id: 546554, title: 'Knives Out', year: 2019, rating: 7.9, genre: 'Mystery', posterPath: '/pThyQovXQrw2q0Q9ZH0mrNqaKGJ.jpg' },
+  { id: 313369, title: 'La La Land', year: 2016, rating: 8.0, genre: 'Romance', posterPath: '/uDO8zWDhfWwoFdKS4fzkUJt0Rf0.jpg' },
+  { id: 37799, title: 'The Social Network', year: 2010, rating: 7.8, genre: 'Drama', posterPath: '/n0cEjHsJEHtgjEvukim0CbuhTYF.jpg' },
+  { id: 6977, title: 'No Country for Old Men', year: 2007, rating: 8.1, genre: 'Thriller', posterPath: '/6JoRHa6euadEu149PofWlnWdMYx.jpg' },
+  { id: 7340, title: 'There Will Be Blood', year: 2007, rating: 8.2, genre: 'Drama', posterPath: '/fa0RDUpGaSDjXU_ad9EHG8-XRqv.jpg' },
+  { id: 274, title: 'The Silence of the Lambs', year: 1991, rating: 8.3, genre: 'Thriller', posterPath: '/rplLJ2hHbOSiPMOPT6hHyV0PEzn.jpg' },
+  { id: 1422, title: 'The Departed', year: 2006, rating: 8.2, genre: 'Crime', posterPath: '/r9QusTGjNMx2IPKN3CU31466Sql.jpg' },
+  { id: 78, title: 'Blade Runner', year: 1982, rating: 8.1, genre: 'Sci-Fi', posterPath: '/vfzE3PJ85K2EHArGMJ9WUlvsu2v.jpg' },
+  { id: 745, title: 'The Untouchables', year: 1987, rating: 7.8, genre: 'Crime', posterPath: '/jcpa9gTuHrPJYnLWqA2pIwU55Jn.jpg' },
+  {
+    id: 4935,
+    title: "Howl's Moving Castle",
+    year: 2004,
+    rating: 8.4,
+    genre: 'Animation',
+    posterPath: '/jpUeKgLmzuWGtjIEW0aBVsM6x82.jpg',
+  },
+  { id: 335984, title: 'Blade Runner 2049', year: 2017, rating: 8.0, genre: 'Sci-Fi', posterPath: '/gajva2L0rHYkAT2S0iqoQB8WUmp.jpg' },
+  { id: 263115, title: 'Logan', year: 2017, rating: 8.1, genre: 'Action', posterPath: '/fnbjcRDYn6YviOceSK1dug6AYS5.jpg' },
+  { id: 447332, title: 'A Quiet Place', year: 2018, rating: 7.5, genre: 'Horror', posterPath: '/nAU74zmpbhouR93TWjvJPuFc2lT.jpg' },
+  { id: 419430, title: 'Get Out', year: 2017, rating: 7.8, genre: 'Thriller', posterPath: '/tFXcEccSazf6qY3107PdHA62sM6.jpg' },
+  { id: 490132, title: 'Green Book', year: 2018, rating: 8.2, genre: 'Drama', posterPath: '/hjxIZvD3IB476BabcILbTHL63L9.jpg' },
+  { id: 399055, title: 'The Shape of Water', year: 2017, rating: 7.3, genre: 'Drama', posterPath: '/wcIwLS0aAwn0madSHKTECspCtPK.jpg' },
 ];
 
 function normalizeUserGenreLabel(raw: string): string {
@@ -290,12 +328,15 @@ function offlineWantedLabels(genreNames: string[]): Set<string> {
   return new Set(genreNames.map((g) => normalizeUserGenreLabel(g)).filter(Boolean));
 }
 
-function fallbackByGenres(genreNames: string[], limit = 50, sortByRating = false) {
+type OfflineDiscoverSort = 'default' | 'rating' | 'year';
+
+function fallbackByGenres(genreNames: string[], limit = 50, offlineSort: OfflineDiscoverSort = 'default') {
   const cap = Math.min(150, Math.max(1, limit));
   const wanted = offlineWantedLabels(genreNames);
   let pool = [...FALLBACK_MOVIES];
-  if (sortByRating && wanted.size === 0) {
-    pool.sort((a, b) => b.rating - a.rating);
+  if (wanted.size === 0) {
+    if (offlineSort === 'rating') pool.sort((a, b) => b.rating - a.rating);
+    else if (offlineSort === 'year') pool.sort((a, b) => b.year - a.year);
   }
   const matched = wanted.size
     ? pool.filter((m) => wanted.has(m.genre.toLowerCase()))
@@ -364,9 +405,34 @@ export async function listTmdbGenres(): Promise<{ id: number; name: string }[]> 
 }
 
 export type DiscoverByGenresOptions = {
-  sortBy?: 'popularity.desc' | 'vote_average.desc';
+  sortBy?:
+    | 'popularity.desc'
+    | 'vote_average.desc'
+    | 'release_date.desc'
+    | 'revenue.desc'
+    | 'vote_count.desc';
   voteCountGte?: number;
 };
+
+function offlineSortForDiscover(sortBy: string): OfflineDiscoverSort {
+  if (sortBy === 'release_date.desc') return 'year';
+  if (
+    sortBy === 'vote_average.desc' ||
+    sortBy === 'vote_count.desc' ||
+    sortBy === 'revenue.desc'
+  ) {
+    return 'rating';
+  }
+  return 'default';
+}
+
+function voteCountFloorForDiscover(sortBy: string, explicit?: number): number | undefined {
+  if (explicit != null && Number.isFinite(explicit)) return explicit;
+  if (sortBy === 'vote_average.desc') return 250;
+  if (sortBy === 'release_date.desc') return 80;
+  if (sortBy === 'revenue.desc') return 100;
+  return undefined;
+}
 
 export async function discoverByGenres(
   genreNames: string[],
@@ -378,10 +444,8 @@ export async function discoverByGenres(
   const sortBy = opts?.sortBy ?? 'popularity.desc';
   const primarySort: { sortBy: string; voteCountGte?: number } = {
     sortBy,
-    voteCountGte:
-      sortBy === 'vote_average.desc' ? (opts?.voteCountGte ?? 250) : undefined,
+    voteCountGte: voteCountFloorForDiscover(sortBy, opts?.voteCountGte),
   };
-  const sortByRating = sortBy === 'vote_average.desc';
 
   try {
     const genres = await tmdbClient.getMovieGenres();
@@ -412,7 +476,7 @@ export async function discoverByGenres(
       genres: m.genreIds ?? [],
     }));
   } catch {
-    return fallbackByGenres(genreNames, limit, sortByRating);
+    return fallbackByGenres(genreNames, limit, offlineSortForDiscover(sortBy));
   }
 }
 

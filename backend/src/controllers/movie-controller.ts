@@ -23,7 +23,12 @@ export async function discoverMovies(req: Request, res: Response): Promise<void>
     region?: string;
     page?: number;
     limit?: number;
-    sortBy?: 'popularity.desc' | 'vote_average.desc';
+    sortBy?:
+      | 'popularity.desc'
+      | 'vote_average.desc'
+      | 'release_date.desc'
+      | 'revenue.desc'
+      | 'vote_count.desc';
     voteCountGte?: number;
   };
   const genres = String(q.genres ?? '')
@@ -35,10 +40,8 @@ export async function discoverMovies(req: Request, res: Response): Promise<void>
   const limit = q.limit ?? 50;
   const sortBy = q.sortBy ?? 'popularity.desc';
   const voteCountGte =
-    sortBy === 'vote_average.desc'
-      ? q.voteCountGte != null && Number.isFinite(q.voteCountGte)
-        ? q.voteCountGte
-        : 250
+    q.voteCountGte != null && Number.isFinite(Number(q.voteCountGte))
+      ? Number(q.voteCountGte)
       : undefined;
 
   const movies = await movieService.discoverByGenres(genres, region, page, limit, {

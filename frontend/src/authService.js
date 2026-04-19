@@ -17,10 +17,11 @@ function normalizeName(value = "") {
   return value.trim().toLowerCase();
 }
 
+/** Demo / legacy fallback when we only have a display name (e.g. group picks). Returns [] if unknown—callers should treat empty as “no genre bias”. */
 export function getGenrePreferencesForDisplayName(displayName) {
   const key = normalizeName(displayName);
   if (DEMO_DEFAULT_GENRES[key]) return DEMO_DEFAULT_GENRES[key];
-  return ["Drama"];
+  return [];
 }
 
 function mapLoginToEmail(usernameOrEmail = "") {
