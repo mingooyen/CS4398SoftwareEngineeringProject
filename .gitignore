@@ -1,27 +1,10 @@
-# Dependencies
 node_modules/
-
-# Build
 dist/
-
-# Environment
 .env
-.env.local
-.env.*.local
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Logs
+.env.*
+!.env.example
 *.log
-npm-debug.log*
-
-# Prisma
-prisma/migrations/
+.DS_Store
+coverage/
+.idea/
+.vscode/*.log

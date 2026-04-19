@@ -19,7 +19,7 @@
 
 ```
 movie-night-planner/
-├── client/                          # React + Vite frontend
+├── frontend/                        # React + Vite frontend
 │   ├── public/
 │   ├── src/
 │   │   ├── components/
@@ -42,7 +42,7 @@ movie-night-planner/
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── vite.config.ts
-├── server/                          # Express + TypeScript backend
+├── backend/                         # Express + TypeScript backend
 │   ├── src/
 │   │   ├── config/
 │   │   ├── middleware/
@@ -57,9 +57,9 @@ movie-night-planner/
 │   │   ├── types/
 │   │   ├── utils/
 │   │   └── app.ts
-│   ├── prisma/
-│   │   ├── schema.prisma
-│   │   └── migrations/
+├── database/                        # Prisma schema + migrations
+│   ├── schema.prisma
+│   └── migrations/
 │   ├── package.json
 │   ├── tsconfig.json
 │   └── .env.example
@@ -67,7 +67,7 @@ movie-night-planner/
 │   ├── ARCHITECTURE.md
 │   └── API-CONTRACT.md
 ├── .gitignore
-├── .env.example                    # Root env template (client + server vars)
+├── .env.example                    # Root env template (frontend + backend vars)
 └── README.md
 ```
 
@@ -340,24 +340,24 @@ All 4xx/5xx: `{ error: string, code?: string }`. Auth: access token in httpOnly 
 
 | Layer | Scope | Location | Notes |
 |-------|--------|----------|--------|
-| Unit | DTOs (Zod) | server/src/dtos/*.test.ts | Valid/invalid payloads |
-| Unit | JWT utils | server/src/utils/jwt.test.ts | sign/verify access & refresh |
-| Unit | Recommendation engine | server/src/services/ai/recommendation-engine.test.ts | Mock OpenAI; assert input/output shape |
-| Unit | Repositories | server/src/repositories/*.test.ts | Mock Prisma; assert calls and return values |
-| Unit | Services | server/src/services/*.test.ts | Mock repos + TMDB; business logic |
-| Integration | API auth | server/tests/integration/auth.test.ts | Register, login, refresh, protected route |
-| Integration | API movies | server/tests/integration/movies.test.ts | Search, watchlist, watched, ratings |
-| Integration | API groups | server/tests/integration/groups.test.ts | CRUD, join/leave, RBAC |
-| Integration | API sessions & votes | server/tests/integration/sessions-votes.test.ts | Sessions CRUD, cast vote, results |
-| E2E | Critical paths | client/e2e/*.spec.ts | Login → create group → create session → vote (Playwright/Cypress) |
+| Unit | DTOs (Zod) | backend/src/dtos/*.test.ts | Valid/invalid payloads |
+| Unit | JWT utils | backend/src/utils/jwt.test.ts | sign/verify access & refresh |
+| Unit | Recommendation engine | backend/src/services/ai/recommendation-engine.test.ts | Mock OpenAI; assert input/output shape |
+| Unit | Repositories | backend/src/repositories/*.test.ts | Mock Prisma; assert calls and return values |
+| Unit | Services | backend/src/services/*.test.ts | Mock repos + TMDB; business logic |
+| Integration | API auth | backend/tests/integration/auth.test.ts | Register, login, refresh, protected route |
+| Integration | API movies | backend/tests/integration/movies.test.ts | Search, watchlist, watched, ratings |
+| Integration | API groups | backend/tests/integration/groups.test.ts | CRUD, join/leave, RBAC |
+| Integration | API sessions & votes | backend/tests/integration/sessions-votes.test.ts | Sessions CRUD, cast vote, results |
+| E2E | Critical paths | frontend/e2e/*.spec.ts | Login → create group → create session → vote (Playwright/Cypress) |
 
 ---
 
 ## 9) Dev Workflow
 
 - **Branches**: main (production); feature/xxx, fix/xxx; short-lived PRs into main.
-- **Migrations**: Prisma migrations in server/prisma/migrations; never edit applied migrations; new changes via `npx prisma migrate dev --name descriptive_name`.
-- **Linting**: ESLint (TypeScript) in client and server; run `npm run lint` in each.
+- **Migrations**: Prisma migrations in `database/migrations`; never edit applied migrations; new changes via `npm run db:migrate` (from `backend`).
+- **Linting**: ESLint (TypeScript) in frontend and backend; run `npm run lint` in each.
 - **Formatting**: Prettier; config in root or per package; `npm run format`; format on save optional.
 - **Commits**: Conventional commits preferred: feat:, fix:, chore:, docs:, refactor:; scope optional (e.g. feat(auth): add refresh endpoint).
 - **Env**: .env from .env.example; never commit .env; DOCUMENT all vars in .env.example (DATABASE_URL, JWT_SECRET, JWT_REFRESH_SECRET, TMDB_API_KEY, OPENAI_API_KEY, etc.).
@@ -367,8 +367,8 @@ All 4xx/5xx: `{ error: string, code?: string }`. Auth: access token in httpOnly 
 
 ## 10) Future Files (Later Phases)
 
-- **Notifications**: server — `services/notification-service.ts`, `repositories/notification-repository.ts`, `routes/api/v1/notification-routes.ts`; client — `components/notifications/notification-bell.tsx`, `hooks/use-notifications.ts`; DB — `notifications` table (userId, type, payload, readAt).
-- **Streaming providers**: server — `utils/streaming-provider-client.ts` (e.g. JustWatch or provider APIs), `services/movie-service.ts` extend to attach “where to watch”; client — `components/movie/where-to-watch.tsx`.
-- **Analytics**: server — `services/analytics-service.ts`, `repositories/analytics-repository.ts`; DB — `session_views` or `event_log` (userId, eventType, resourceId, createdAt); optional dashboard route and admin-only UI.
+- **Notifications**: backend — `services/notification-service.ts`, `repositories/notification-repository.ts`, `routes/api/v1/notification-routes.ts`; frontend — `components/notifications/notification-bell.tsx`, `hooks/use-notifications.ts`; DB — `notifications` table (userId, type, payload, readAt).
+- **Streaming providers**: backend — `utils/streaming-provider-client.ts` (e.g. JustWatch or provider APIs), `services/movie-service.ts` extend to attach “where to watch”; frontend — `components/movie/where-to-watch.tsx`.
+- **Analytics**: backend — `services/analytics-service.ts`, `repositories/analytics-repository.ts`; DB — `session_views` or `event_log` (userId, eventType, resourceId, createdAt); optional dashboard route and admin-only UI.
 
 All of the above remain stubs or out-of-scope until a later phase; no implementation in initial skeleton.
