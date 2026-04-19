@@ -1,0 +1,131 @@
+/** Offline discover list — keep in sync with `backend/src/services/movie-service.ts` FALLBACK_MOVIES. */
+
+export const OFFLINE_MOVIES = [
+  { id: 603, title: "The Matrix", year: 1999, rating: 8.2, genre: "Sci-Fi", posterPath: "/aOIuZAjPaRIE6CMzbazvcHuHXDc.jpg" },
+  { id: 680, title: "Pulp Fiction", year: 1994, rating: 8.5, genre: "Crime", posterPath: "/vQWk5YBFWF4bZaofAbv0tShwBvQ.jpg" },
+  { id: 13, title: "Forrest Gump", year: 1994, rating: 8.4, genre: "Drama", posterPath: "/saHP97rTPS5eLmrLQEcANmKrsFl.jpg" },
+  { id: 155, title: "The Dark Knight", year: 2008, rating: 8.5, genre: "Action", posterPath: "/qJ2tW6WMUDux911r6m7haRef0WH.jpg" },
+  { id: 671, title: "Harry Potter and the Sorcerer's Stone", year: 2001, rating: 7.9, genre: "Fantasy", posterPath: "/wuMc08IPKEatf9rnMNXvIDxqP4W.jpg" },
+  { id: 862, title: "Toy Story", year: 1995, rating: 7.9, genre: "Animation", posterPath: "/uXDfjJbdP4ijW5hWSBrPrlKpxab.jpg" },
+  { id: 675, title: "Harry Potter and the Order of the Phoenix", year: 2007, rating: 7.7, genre: "Adventure", posterPath: "/5aOyriWkPec0zUDxmHFP9qMmBaj.jpg" },
+  { id: 424, title: "Schindler's List", year: 1993, rating: 8.6, genre: "History", posterPath: "/sF1U4EUQS8YHUYjNl3pMGNIQyr0.jpg" },
+  { id: 238, title: "The Godfather", year: 1972, rating: 8.7, genre: "Drama", posterPath: "/3bhkrj58Vtu7enYsRolD1fZdja1.jpg" },
+  { id: 27205, title: "Inception", year: 2010, rating: 8.3, genre: "Sci-Fi", posterPath: "/xlaY2zyzMfkhk0HSC5VUwzoZPU1.jpg" },
+  { id: 550, title: "Fight Club", year: 1999, rating: 8.8, genre: "Drama", posterPath: "/jSziioSwPVrOy9Yow3XhWIBDjq1.jpg" },
+  { id: 278, title: "The Shawshank Redemption", year: 1994, rating: 8.7, genre: "Drama", posterPath: "/9cqNxx0GxF0bflZmeSMuL5tnGzr.jpg" },
+  { id: 120, title: "The Lord of the Rings: The Fellowship of the Ring", year: 2001, rating: 8.8, genre: "Fantasy", posterPath: "/6oom5QYQ2yQTMJIbnvbkBL9cHo6.jpg" },
+  { id: 129, title: "Spirited Away", year: 2001, rating: 8.6, genre: "Animation", posterPath: "/39wmItIWsg5sZMyRUHLkWBcuVCM.jpg" },
+  { id: 496243, title: "Parasite", year: 2019, rating: 8.5, genre: "Thriller", posterPath: "/7IiTTgloJzvGI1TAYymCfbfl3vT.jpg" },
+  { id: 244786, title: "Whiplash", year: 2014, rating: 8.5, genre: "Drama", posterPath: "/7fn624j5lj3xTme2SgiLCeuedmO.jpg" },
+  { id: 299534, title: "Avengers: Endgame", year: 2019, rating: 8.4, genre: "Action", posterPath: "/ulzhLuWrPK07P1YkdWQLZnQh1JL.jpg" },
+  { id: 19995, title: "Avatar", year: 2009, rating: 7.9, genre: "Sci-Fi", posterPath: "/gKY6q7SjCkAU6FqvqWybDYgUKIF.jpg" },
+  { id: 157336, title: "Interstellar", year: 2014, rating: 8.6, genre: "Sci-Fi", posterPath: "/yQvGrMoipbRoddT0ZR8tPoR7NfX.jpg" },
+  { id: 122, title: "The Lord of the Rings: The Return of the King", year: 2003, rating: 8.9, genre: "Fantasy", posterPath: "/rCzpDGLbOoPwLjy3OAm5NUPOTrC.jpg" },
+  { id: 121, title: "The Lord of the Rings: The Two Towers", year: 2002, rating: 8.7, genre: "Fantasy", posterPath: "/5VTN0pR8gcqV3EPUHHfMGnJYN9L.jpg" },
+  { id: 769, title: "GoodFellas", year: 1990, rating: 8.7, genre: "Crime", posterPath: "/9OkCLM73MIU2CrKZbqiT8Ln1wY2.jpg" },
+  { id: 497, title: "The Green Mile", year: 1999, rating: 8.6, genre: "Drama", posterPath: "/8VG8fDNiy50H4FedGwdSVUPoaJe.jpg" },
+  { id: 637, title: "Life Is Beautiful", year: 1997, rating: 8.6, genre: "Drama", posterPath: "/mfnkSeeVOBVheuyn2lo4tfmOPQb.jpg" },
+  { id: 346, title: "Seven Samurai", year: 1954, rating: 8.6, genre: "Action", posterPath: "/lOMGc8bnSwQhS4XyE1S99uH8NXf.jpg" },
+  { id: 324857, title: "Spider-Man: Into the Spider-Verse", year: 2018, rating: 8.4, genre: "Animation", posterPath: "/iiZZdoQBEYBv6id8su7ImL0oCbD.jpg" },
+  { id: 324852, title: "Spider-Man: Far From Home", year: 2019, rating: 7.4, genre: "Action", posterPath: "/6t3YWl7hrr88lCEFlGVqW5yV99R.jpg" },
+  { id: 315635, title: "Spider-Man: Homecoming", year: 2017, rating: 7.4, genre: "Action", posterPath: "/c24sv2weTHPsmDa7jEMN0m2P3RT.jpg" },
+  { id: 557, title: "Spider-Man", year: 2002, rating: 7.4, genre: "Action", posterPath: "/kjdJntyBeEvqm9w97QGBdxPptzj.jpg" },
+  { id: 105, title: "Back to the Future", year: 1985, rating: 8.3, genre: "Sci-Fi", posterPath: "/vN5B5WgYscRGcQpVhHl6p9DDTP0.jpg" },
+  { id: 106, title: "Back to the Future Part II", year: 1989, rating: 7.8, genre: "Sci-Fi", posterPath: "/k3mW4qfJo6SKqe6laRyNGnbB9n5.jpg" },
+  { id: 107, title: "Back to the Future Part III", year: 1990, rating: 7.4, genre: "Western", posterPath: "/kJZoAHq1SLDdWjeNGtlHAnGpmFV.jpg" },
+  { id: 16869, title: "Inglourious Basterds", year: 2009, rating: 8.3, genre: "War", posterPath: "/7sfbEnaARXDDhKm0CZ7D7uc2sbo.jpg" },
+  { id: 68718, title: "Django Unchained", year: 2012, rating: 8.4, genre: "Western", posterPath: "/7oWY8VDWW7thTzWh3OKYRkWUlD5.jpg" },
+  { id: 1891, title: "The Empire Strikes Back", year: 1980, rating: 8.4, genre: "Sci-Fi", posterPath: "/nNAeTmF4CtdSgMDplXTDPOpYzsX.jpg" },
+  { id: 11, title: "Star Wars", year: 1977, rating: 8.6, genre: "Sci-Fi", posterPath: "/6FfCtAuVAW8XJjZ7eWeLibRLWTw.jpg" },
+  { id: 330459, title: "Rogue One: A Star Wars Story", year: 2016, rating: 7.5, genre: "Sci-Fi", posterPath: "/i0yw1mFbB7sNGHCs7EXZPzFkdA1.jpg" },
+  { id: 140607, title: "Star Wars: The Force Awakens", year: 2015, rating: 7.8, genre: "Sci-Fi", posterPath: "/wqnLdwVXoBjKibFRR5U3y0aDUhs.jpg" },
+  { id: 181808, title: "Star Wars: The Last Jedi", year: 2017, rating: 6.9, genre: "Sci-Fi", posterPath: "/kOVEVeg59E0wsnXmF9nrh6OmWII.jpg" },
+  { id: 181812, title: "Star Wars: The Rise of Skywalker", year: 2019, rating: 6.4, genre: "Sci-Fi", posterPath: "/db32LaOibwEliAmSL2jjDF6oDdj.jpg" },
+  { id: 585, title: "Monsters, Inc.", year: 2001, rating: 8.1, genre: "Animation", posterPath: "/wFSpyMsp7H0ttERbxY7Trlv8xry.jpg" },
+  { id: 508947, title: "Turning Red", year: 2022, rating: 7.0, genre: "Animation", posterPath: "/qsdjk9oAKSQMWs0Vt5Pyfh6O4GZ.jpg" },
+  { id: 10674, title: "Mulan", year: 1998, rating: 7.6, genre: "Animation", posterPath: "/jAbexAtB0aSfP5Ay4TpWHARyVnG.jpg" },
+  { id: 364, title: "Batman Returns", year: 1992, rating: 7.1, genre: "Action", posterPath: "/jKBjeXM7iBBV9UkUcOXx3m7FSHY.jpg" },
+  { id: 414, title: "Batman Forever", year: 1995, rating: 5.4, genre: "Action", posterPath: "/i0fJS8M5UKoETjjJ0zwUiKaR8tr.jpg" },
+  { id: 268, title: "Batman", year: 1989, rating: 7.5, genre: "Action", posterPath: "/cij4dd21v2Rk2YtUQbV5kW69WB2.jpg" },
+  { id: 209112, title: "Batman v Superman: Dawn of Justice", year: 2016, rating: 6.1, genre: "Action", posterPath: "/5UsK3grJvtQrtzEgqNlDljJW96w.jpg" },
+  { id: 475557, title: "Joker", year: 2019, rating: 8.2, genre: "Thriller", posterPath: "/udDclJoHjfjb8Ekgsd4FDteOkCU.jpg" },
+  { id: 19404, title: "Dilwale Dulhania Le Jayenge", year: 1995, rating: 8.6, genre: "Romance", posterPath: "/2CAL2433ZeIihfX1Hb2139CX0pW.jpg" },
+  { id: 109445, title: "Frozen", year: 2013, rating: 7.3, genre: "Animation", posterPath: "/itAKcobTYGpYT8Phwjd8c9hleTo.jpg" },
+  { id: 38757, title: "Tangled", year: 2010, rating: 7.6, genre: "Animation", posterPath: "/ym7Kst6a4uodryxqbGOxmewF235.jpg" },
+  { id: 98, title: "Gladiator", year: 2000, rating: 8.2, genre: "Action", posterPath: "/wN2xWp1eIwCKOD0BHTcErTBv1Uq.jpg" },
+  { id: 508, title: "Love Actually", year: 2003, rating: 7.1, genre: "Comedy", posterPath: "/7QPeVsr9rcFU9Gl90yg0gTOTpVv.jpg" },
+  { id: 453, title: "A Beautiful Mind", year: 2001, rating: 7.9, genre: "Drama", posterPath: "/zwzWCmH72OSC9NA0ipoqw5Zjya8.jpg" },
+  { id: 545611, title: "Everything Everywhere All at Once", year: 2022, rating: 7.7, genre: "Sci-Fi", posterPath: "/u68AjlvlutfEIcpmbYpKcdi09ut.jpg" },
+  { id: 438631, title: "Dune", year: 2021, rating: 7.8, genre: "Sci-Fi", posterPath: "/gDzOcq0pfeCeqMBwKIJlSmQpjkZ.jpg" },
+  { id: 447365, title: "Guardians of the Galaxy Vol. 3", year: 2023, rating: 7.9, genre: "Sci-Fi", posterPath: "/r2J02Z2OpNTctfOSN1Ydgii51I3.jpg" },
+  { id: 346698, title: "Barbie", year: 2023, rating: 6.9, genre: "Comedy", posterPath: "/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg" },
+  { id: 872585, title: "Oppenheimer", year: 2023, rating: 8.0, genre: "Drama", posterPath: "/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg" },
+  { id: 414906, title: "The Batman", year: 2022, rating: 7.7, genre: "Thriller", posterPath: "/74xTEgt7R36Fpooo50r9T25onhq.jpg" },
+  { id: 502356, title: "The Super Mario Bros. Movie", year: 2023, rating: 7.6, genre: "Animation", posterPath: "/qNBAXBIQlnOThrVvA6mA2B5ggV6.jpg" },
+  { id: 76341, title: "Mad Max: Fury Road", year: 2015, rating: 7.6, genre: "Action", posterPath: "/hA2ple9q4qnwxp3hKVNhroipsir.jpg" },
+  { id: 106646, title: "The Wolf of Wall Street", year: 2013, rating: 8.0, genre: "Crime", posterPath: "/kW9LmvYHAaS9iA0tHmZVq8hQYoq.jpg" },
+  { id: 976573, title: "Elemental", year: 2023, rating: 7.6, genre: "Animation", posterPath: "/4Y1WNkd88JXmGfhtWR7dmDAo1T2.jpg" },
+  { id: 361743, title: "Top Gun: Maverick", year: 2022, rating: 8.2, genre: "Action", posterPath: "/62HCnUTziyWcpDaBO2i1DX17ljH.jpg" },
+  { id: 615457, title: "Nobody", year: 2021, rating: 7.9, genre: "Action", posterPath: "/oBgWY00bEFeZ9N25wWVyuQddbAo.jpg" },
+  { id: 693134, title: "Dune: Part Two", year: 2024, rating: 8.1, genre: "Sci-Fi", posterPath: "/1pdfLvkbY9ohJlCjQH2CZjjYVvJ.jpg" },
+  { id: 299536, title: "Avengers: Infinity War", year: 2018, rating: 8.2, genre: "Action", posterPath: "/7WsyChQLEftFiDOVTGkv3hFpyyt.jpg" },
+  { id: 346364, title: "It", year: 2017, rating: 7.2, genre: "Horror", posterPath: "/9E2y5Q7WlCVNEhP5GiVTjhEhx1o.jpg" },
+];
+
+function normalizeUserGenreLabel(raw) {
+  const k = String(raw).trim().toLowerCase();
+  const aliases = {
+    "sci-fi": "science fiction",
+    scifi: "science fiction",
+    "science fiction": "science fiction",
+    sf: "science fiction",
+    romcom: "comedy",
+    "rom-com": "comedy",
+    doc: "documentary",
+  };
+  return aliases[k] ?? k;
+}
+
+export function buildOfflineMovies(genreNames = [], limit = 50, sortByRating = false) {
+  const cap = Math.min(150, Math.max(1, limit));
+  const wanted = new Set((genreNames || []).map((g) => normalizeUserGenreLabel(g)).filter(Boolean));
+  let pool = [...OFFLINE_MOVIES];
+  if (sortByRating && wanted.size === 0) {
+    pool.sort((a, b) => b.rating - a.rating);
+  }
+  const matched = wanted.size
+    ? pool.filter((m) => wanted.has(m.genre.toLowerCase()))
+    : [];
+  const usedTitles = new Set();
+  const out = [];
+  for (const m of matched) {
+    if (out.length >= cap) break;
+    if (usedTitles.has(m.title)) continue;
+    usedTitles.add(m.title);
+    out.push(m);
+  }
+  for (const m of pool) {
+    if (out.length >= cap) break;
+    if (usedTitles.has(m.title)) continue;
+    usedTitles.add(m.title);
+    out.push(m);
+  }
+  const base = "https://image.tmdb.org/t/p/w500";
+  return out.slice(0, cap).map((m, i) => {
+    const path = m.posterPath?.trim();
+    const poster =
+      path && !/^https?:\/\//i.test(path)
+        ? `${base}${path.startsWith("/") ? path : `/${path}`}`
+        : path && /^https?:\/\//i.test(path)
+          ? path
+          : null;
+    return {
+      id: m.id * 1000 + i,
+      title: m.title,
+      year: m.year,
+      rating: m.rating,
+      poster,
+      providers: [],
+    };
+  });
+}
