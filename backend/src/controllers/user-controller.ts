@@ -62,6 +62,11 @@ export async function listFriends(req: Request, res: Response): Promise<void> {
   res.json({ friends });
 }
 
+export async function postMyPresence(req: Request, res: Response): Promise<void> {
+  userService.recordMyPresence(req.userId!);
+  res.status(204).send();
+}
+
 export async function createFriendRequest(req: Request, res: Response): Promise<void> {
   await userService.sendFriendRequest(req.userId!, req.body.targetUserId);
   res.status(204).send();

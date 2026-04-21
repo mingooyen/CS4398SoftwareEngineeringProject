@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   acceptInvite,
   acceptFriendRequest,
   denyFriendRequest,
+  leaveGroup,
   normalizeName,
   readFriendRequests,
   readGroups,
@@ -14,6 +15,9 @@ import {
 import { getGenrePreferencesForDisplayName } from "./authService.js";
 import { createPosterErrorHandler, makePosterDataUri } from "./posterUtils.js";
 
+/** Max distinct movies the current user may vote for in one group (recommendations + vote tab). */
+const MAX_USER_VOTE_PICKS = 10;
+
 function VoteBar({ votes, max }) {
   const pct = max > 0 ? (votes / max) * 100 : 0;
   return (
@@ -23,56 +27,235 @@ function VoteBar({ votes, max }) {
   );
 }
 
-function RecommendationCard({ movie, maxVotes, onVote }) {
-  const isLeading = movie.votes === maxVotes && maxVotes > 0;
+function RecommendationCard({
+  movie,
+  maxVotes,
+  onVote,
+  expanded,
+  onExpandToggle,
+  expandFromGridRectRef,
+  userPicksCount = 0,
+  maxUserPicks = MAX_USER_VOTE_PICKS,
+  soleLeaderId = null,
+}) {
+  const slotRef = useRef(null);
+  const cardRef = useRef(null);
+  const expandFirstRef = useRef(null);
+  const collapseFirstRef = useRef(null);
+  const expandedVisualRectRef = useRef(null);
+  const flipEndRef = useRef(null);
+  const isLeading = soleLeaderId != null && String(soleLeaderId) === String(movie.id);
+  const atPickLimit = userPicksCount >= maxUserPicks;
+  const cannotAddNewVote = !movie.userVoted && atPickLimit;
+
+  const clearSlotMinHeight = () => {
+    if (slotRef.current) slotRef.current.style.minHeight = "";
+  };
+
+  const preserveSlotHeight = () => {
+    const s = slotRef.current;
+    if (!s) return;
+    const h = s.getBoundingClientRect().height;
+    if (h > 0) s.style.minHeight = `${h}px`;
+  };
+
+  useLayoutEffect(() => {
+    if (!expanded) return;
+    const el = cardRef.current;
+    if (!el) return;
+    const snap = () => {
+      expandedVisualRectRef.current = el.getBoundingClientRect();
+    };
+    snap();
+    const onWin = () => snap();
+    window.addEventListener("resize", onWin);
+    return () => window.removeEventListener("resize", onWin);
+  }, [expanded]);
+
+  useLayoutEffect(() => {
+    const el = cardRef.current;
+    if (!el) return;
+
+    const runFlip = (first, toExpanded) => {
+      if (flipEndRef.current) {
+        el.removeEventListener("transitionend", flipEndRef.current);
+        flipEndRef.current = null;
+      }
+      const last = el.getBoundingClientRect();
+      if (last.width < 2 || last.height < 2 || first.width < 1 || first.height < 1) {
+        clearSlotMinHeight();
+        return;
+      }
+      const dx = first.left - last.left;
+      const dy = first.top - last.top;
+      const sx = first.width / last.width;
+      const sy = first.height / last.height;
+      el.style.transition = "none";
+      el.style.transformOrigin = "0 0";
+      el.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          el.style.transition = toExpanded
+            ? "transform 0.4s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.35s ease"
+            : "transform 0.34s cubic-bezier(0.32, 0.72, 0, 1)";
+          el.style.transform = "";
+          const onEnd = (e) => {
+            if (e.propertyName !== "transform") return;
+            el.removeEventListener("transitionend", onEnd);
+            el.style.transition = "";
+            el.style.transformOrigin = "";
+            flipEndRef.current = null;
+            if (!toExpanded) clearSlotMinHeight();
+          };
+          flipEndRef.current = onEnd;
+          el.addEventListener("transitionend", onEnd);
+        });
+      });
+    };
+
+    if (expanded) {
+      expandedVisualRectRef.current = null;
+      let first = expandFirstRef.current;
+      expandFirstRef.current = null;
+      if (!first && expandFromGridRectRef?.current) {
+        const fr = expandFromGridRectRef.current;
+        expandFromGridRectRef.current = null;
+        first = { left: fr.left, top: fr.top, width: fr.width, height: fr.height };
+      }
+      if (first) {
+        runFlip(first, true);
+      }
+      return;
+    }
+
+    if (!expanded) {
+      let cFirst = collapseFirstRef.current;
+      collapseFirstRef.current = null;
+      if (!cFirst && expandedVisualRectRef.current) {
+        cFirst = expandedVisualRectRef.current;
+        expandedVisualRectRef.current = null;
+      }
+      if (cFirst) {
+        runFlip(cFirst, false);
+        return;
+      }
+      clearSlotMinHeight();
+    }
+  }, [expanded]);
+
+  useEffect(
+    () => () => {
+      const el = cardRef.current;
+      if (el && flipEndRef.current) {
+        el.removeEventListener("transitionend", flipEndRef.current);
+        el.style.transition = "";
+        el.style.transform = "";
+        el.style.transformOrigin = "";
+      }
+      if (slotRef.current) slotRef.current.style.minHeight = "";
+    },
+    []
+  );
+
+  const toggleExpand = () => {
+    const el = cardRef.current;
+    if (!expanded) {
+      if (el) expandFirstRef.current = el.getBoundingClientRect();
+      preserveSlotHeight();
+      onExpandToggle("open");
+    } else {
+      if (el) collapseFirstRef.current = el.getBoundingClientRect();
+      onExpandToggle("close");
+    }
+  };
 
   return (
-    <div className={`rec-card ${isLeading ? "leading" : ""}`}>
-      {isLeading && <div className="leading-badge">🏆 Leading</div>}
-      <div className="rec-poster-wrap">
-        <img
-          src={
-            movie.poster ||
-            makePosterDataUri(movie.title)
-          }
-          alt={movie.title}
-          className="rec-poster"
-          referrerPolicy="no-referrer"
-          loading="lazy"
-          onError={createPosterErrorHandler(movie.title)}
-        />
-      </div>
-      <div className="rec-body">
-        <div className="rec-meta">
-          <span className="rec-genre">{movie.genre || "General"}</span>
-          <span className="rec-year">{movie.year || "—"}</span>
-        </div>
-        <h3 className="rec-title">{movie.title}</h3>
-        <p className="rating-num" style={{ marginBottom: "8px" }}>
-          {movie.providers?.length
-            ? `Where to watch: ${movie.providers.map((p) => p.providerName).slice(0, 3).join(", ")}`
-            : "Where to watch info unavailable"}
-        </p>
-        <div className="rec-rating">
-          <span className="stars">
-            {"★".repeat(Math.round(movie.avgRating || 0))}
-            {"☆".repeat(5 - Math.round(movie.avgRating || 0))}
-          </span>
-          <span className="rating-num">{(movie.avgRating || 0).toFixed(1)} avg</span>
-        </div>
-
-        <div className="vote-row">
-          <VoteBar votes={movie.votes || 0} max={maxVotes} />
-          <span className="vote-count">{movie.votes || 0} vote{movie.votes === 1 ? "" : "s"}</span>
-        </div>
-
-        <button
-          className={`vote-btn ${movie.userVoted ? "voted" : ""}`}
-          onClick={() => onVote(movie.id)}
-          disabled={movie.userVoted}
+    <div
+      ref={slotRef}
+      className={`rec-card-slot${expanded ? " rec-card-slot--expanded" : ""}`}
+      data-rec-slot={movie.id}
+    >
+      {expanded && <div className="rec-card-slot-outline" aria-hidden />}
+      <div className={`rec-card-expand-host${expanded ? "" : " rec-card-expand-host--pass"}`}>
+        <div
+          ref={cardRef}
+          className={`rec-card ${isLeading ? "leading" : ""}${expanded ? " rec-card--expanded" : ""}`}
         >
-          {movie.userVoted ? "✓ Voted" : "Vote"}
-        </button>
+          {isLeading && <div className="leading-badge">🏆 Leading</div>}
+          <div
+            className="rec-card-hit"
+            role="button"
+            tabIndex={0}
+            aria-expanded={expanded}
+            aria-label={`${expanded ? "Collapse" : "Expand"} full poster and details for ${movie.title}`}
+            onClick={toggleExpand}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggleExpand();
+              }
+            }}
+          >
+            <div className="rec-poster-wrap">
+              <img
+                src={
+                  movie.poster ||
+                  makePosterDataUri(movie.title)
+                }
+                alt=""
+                className="rec-poster"
+                referrerPolicy="no-referrer"
+                loading="lazy"
+                onError={createPosterErrorHandler(movie.title)}
+              />
+            </div>
+            <div className="rec-body">
+              <div className="rec-meta">
+                <span className="rec-genre">{movie.genre || "General"}</span>
+                <span className="rec-year">{movie.year || "—"}</span>
+              </div>
+              <h3 className="rec-title">{movie.title}</h3>
+              <p className="rec-providers rating-num">
+                {movie.providers?.length
+                  ? `Where to watch: ${movie.providers.map((p) => p.providerName).slice(0, 3).join(", ")}`
+                  : "Where to watch info unavailable"}
+              </p>
+              <div className="rec-rating">
+                <span className="stars">
+                  {"★".repeat(Math.round(movie.avgRating || 0))}
+                  {"☆".repeat(5 - Math.round(movie.avgRating || 0))}
+                </span>
+                <span className="rating-num">{(movie.avgRating || 0).toFixed(1)} avg</span>
+              </div>
+            </div>
+          </div>
+          <div className="rec-card-vote" onClick={(e) => e.stopPropagation()}>
+            <div className="vote-row">
+              <VoteBar votes={movie.votes || 0} max={maxVotes} />
+              <span className="vote-count">{movie.votes || 0} vote{movie.votes === 1 ? "" : "s"}</span>
+            </div>
+            <button
+              type="button"
+              className={`vote-btn ${movie.userVoted ? "voted" : ""}${cannotAddNewVote ? " vote-btn--blocked" : ""}`}
+              onClick={() => onVote(movie.id)}
+              disabled={cannotAddNewVote}
+              title={
+                cannotAddNewVote
+                  ? `You can vote for up to ${maxUserPicks} movies. Undo a pick to vote here.`
+                  : undefined
+              }
+              aria-label={
+                movie.userVoted
+                  ? `Undo vote for ${movie.title}`
+                  : cannotAddNewVote
+                    ? `Cannot vote for ${movie.title}: ${maxUserPicks} picks already used`
+                    : `Vote for ${movie.title}`
+              }
+            >
+              {movie.userVoted ? "Undo vote" : cannotAddNewVote ? `${maxUserPicks} picks max` : "Vote"}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -84,6 +267,12 @@ function ScheduleForm({ onSchedule, movies }) {
   const [time, setTime] = useState("");
   const [location, setLocation] = useState("");
 
+  useEffect(() => {
+    if (selectedMovie && !(movies ?? []).some((m) => m.title === selectedMovie)) {
+      setSelectedMovie("");
+    }
+  }, [movies, selectedMovie]);
+
   const handleSubmit = () => {
     if (!selectedMovie || !date || !time) return;
     onSchedule({ movie: selectedMovie, date, time, location });
@@ -93,9 +282,22 @@ function ScheduleForm({ onSchedule, movies }) {
     setLocation("");
   };
 
+  if (!movies || movies.length === 0) {
+    return (
+      <div className="schedule-form">
+        <h3 className="form-title">📅 Schedule a Session</h3>
+        <p className="schedule-empty-hint">
+          Cast votes on the <strong>Recommendations</strong> tab first. You can only schedule movies that already have
+          at least one vote in this group.
+        </p>
+      </div>
+    );
+  }
+
   return (
     <div className="schedule-form">
       <h3 className="form-title">📅 Schedule a Session</h3>
+      <p className="schedule-movie-hint">Choose from titles that have been voted on (sorted by vote count).</p>
       <div className="form-grid">
         <div className="form-field">
           <label>Movie</label>
@@ -103,7 +305,7 @@ function ScheduleForm({ onSchedule, movies }) {
             <option value="">Select a movie...</option>
             {(movies ?? []).map((m) => (
               <option key={m.id} value={m.title}>
-                {m.title}
+                {m.title} ({m.votes || 0} vote{(m.votes || 0) === 1 ? "" : "s"})
               </option>
             ))}
           </select>
@@ -128,7 +330,7 @@ function ScheduleForm({ onSchedule, movies }) {
           />
         </div>
       </div>
-      <button className="schedule-btn" onClick={handleSubmit}>
+      <button type="button" className="schedule-btn" onClick={handleSubmit}>
         Confirm Session
       </button>
     </div>
@@ -167,6 +369,12 @@ export default function GroupDetailPage({
 }) {
   const currentUserName = highlightedName?.trim() || "You";
   const [activeTab, setActiveTab] = useState("recommendations");
+  /** At most one recommendation card expanded (poster) at a time, across tabs. */
+  const [expandedPosterMovieId, setExpandedPosterMovieId] = useState(null);
+  /** FLIP “from” rect when opening via pointer on another card (see document capture listener). */
+  const expandFromGridRectRef = useRef(null);
+  /** After switching cards via document capture, ignore an immediate synthetic “close” from the same gesture. */
+  const suppressPosterCloseUntilRef = useRef(0);
   const [groups, setGroups] = useState(() => readGroups());
   const [groupInvites, setGroupInvites] = useState(() => readInvites());
   const [friendRequests, setFriendRequests] = useState(() => readFriendRequests());
@@ -181,7 +389,52 @@ export default function GroupDetailPage({
     setGroups(readGroups());
     setGroupInvites(readInvites());
     setFriendRequests(readFriendRequests());
-  }, [groupId, highlightedName]);
+    setExpandedPosterMovieId(null);
+    expandFromGridRectRef.current = null;
+    suppressPosterCloseUntilRef.current = 0;
+    // Do not depend on `highlightedName`: App refetches profile and updates name; reloading groups
+    // from storage here wipes in-memory `_uiMovies` (votes) and makes controls feel broken.
+  }, [groupId]);
+
+  useEffect(() => {
+    setExpandedPosterMovieId(null);
+    expandFromGridRectRef.current = null;
+    suppressPosterCloseUntilRef.current = 0;
+  }, [activeTab]);
+
+  useEffect(() => {
+    if (!expandedPosterMovieId) return;
+    const t = window.setTimeout(() => setExpandedPosterMovieId(null), 5000);
+    return () => clearTimeout(t);
+  }, [expandedPosterMovieId]);
+
+  useEffect(() => {
+    if (!expandedPosterMovieId) return;
+    const onPointerDownCapture = (e) => {
+      const slot = e.target.closest("[data-rec-slot]");
+      if (!slot) return;
+      const mid = slot.dataset.recSlot;
+      if (!mid || String(mid) === String(expandedPosterMovieId)) return;
+      if (e.target.closest(".rec-card-vote")) return;
+      const hit = e.target.closest(".rec-card-hit");
+      if (!hit || !slot.contains(hit)) return;
+      const cardEl = slot.querySelector(".rec-card");
+      if (!cardEl) return;
+      const r = cardEl.getBoundingClientRect();
+      expandFromGridRectRef.current = {
+        left: r.left,
+        top: r.top,
+        width: r.width,
+        height: r.height,
+      };
+      suppressPosterCloseUntilRef.current = Date.now() + 500;
+      setExpandedPosterMovieId(String(mid));
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    document.addEventListener("pointerdown", onPointerDownCapture, true);
+    return () => document.removeEventListener("pointerdown", onPointerDownCapture, true);
+  }, [expandedPosterMovieId]);
 
   const group = useMemo(() => groups.find((g) => g.id === groupId) ?? null, [groups, groupId]);
   const activeGroup = group;
@@ -190,6 +443,27 @@ export default function GroupDetailPage({
     isSystemAdmin ||
     (creatorMember &&
       normalizeName(creatorMember.name) === normalizeName(currentUserName));
+  const isCurrentUserMember = useMemo(
+    () =>
+      Boolean(
+        activeGroup?.members?.some(
+          (m) => normalizeName(m.name) === normalizeName(currentUserName)
+        )
+      ),
+    [activeGroup?.members, currentUserName]
+  );
+  /** Public groups: any member may invite. Private: leader (or system admin) only. */
+  const canSendInvites =
+    isCurrentUserMember && (!Boolean(activeGroup?.isPrivate) || canManageGroup);
+  const isGroupCreator = useMemo(
+    () =>
+      Boolean(
+        creatorMember && normalizeName(creatorMember.name) === normalizeName(currentUserName)
+      ),
+    [creatorMember, currentUserName]
+  );
+  /** Members (not the creator) may leave from the header next to Invite. */
+  const canLeaveGroup = isCurrentUserMember && !isGroupCreator;
   const visibleInvites = groupInvites.filter(
     (invite) => normalizeName(invite.invitedUserName) === normalizeName(currentUserName)
   );
@@ -215,22 +489,63 @@ export default function GroupDetailPage({
       })),
     [liveMovies]
   );
-  const maxVotes = Math.max(...movies.map((m) => m.votes || 0), 0);
+  const tabMovies = activeGroup?._uiMovies || movies;
+  const maxVotes =
+    tabMovies.length > 0 ? Math.max(...tabMovies.map((m) => m.votes || 0), 0) : 0;
+  const userPicksCount = useMemo(() => tabMovies.filter((m) => m.userVoted).length, [tabMovies]);
+
+  /** Single movie id with the top vote count, or null if none / tied for first. */
+  const soleLeaderMovieId = useMemo(() => {
+    if (maxVotes <= 0) return null;
+    const atMax = tabMovies.filter((m) => (m.votes || 0) === maxVotes);
+    if (atMax.length !== 1) return null;
+    return String(atMax[0].id);
+  }, [tabMovies, maxVotes]);
+
+  /** Titles with at least one group vote (any member). */
+  const votedMovies = useMemo(
+    () =>
+      [...tabMovies]
+        .filter((m) => (m.votes || 0) > 0)
+        .sort((a, b) => (b.votes || 0) - (a.votes || 0)),
+    [tabMovies]
+  );
+  /** Vote tab: only voted titles, max 10 (highest vote counts first). */
+  const voteTabMovies = useMemo(() => votedMovies.slice(0, 10), [votedMovies]);
+  const maxVoteTabVotes =
+    voteTabMovies.length > 0 ? Math.max(...voteTabMovies.map((m) => m.votes || 0), 0) : 0;
 
   const handleVote = (movieId) => {
-    // Local UI-only vote state for now.
-    const next = movies.map((m) =>
-      m.id === movieId ? { ...m, votes: (m.votes || 0) + 1, userVoted: true } : m
-    );
-    // We keep recommendations derived; write temporary votes into local schedule-only state by replacing tab source.
-    // This avoids introducing new global storage while preserving UX.
-    if (activeGroup) {
-      const g = groups.map((x) => (x.id === activeGroup.id ? { ...x, _uiMovies: next } : x));
-      setGroups(g);
-    }
+    setGroups((prev) => {
+      const ag = prev.find((x) => x.id === groupId);
+      if (!ag) return prev;
+      const base = ag._uiMovies || movies;
+      const target = base.find((m) => String(m.id) === String(movieId));
+      if (!target) return prev;
+      if (!target.userVoted) {
+        const picks = base.filter((m) => m.userVoted).length;
+        if (picks >= MAX_USER_VOTE_PICKS) return prev;
+      }
+      const next = base.map((m) => {
+        if (String(m.id) !== String(movieId)) return m;
+        if (m.userVoted) {
+          return { ...m, votes: Math.max(0, (m.votes || 0) - 1), userVoted: false };
+        }
+        return { ...m, votes: (m.votes || 0) + 1, userVoted: true };
+      });
+      return prev.map((x) => (x.id === ag.id ? { ...x, _uiMovies: next } : x));
+    });
   };
 
-  const tabMovies = activeGroup?._uiMovies || movies;
+  const handlePosterExpandIntent = (movieId, intent) => {
+    if (intent === "close") {
+      if (Date.now() < suppressPosterCloseUntilRef.current) return;
+      setExpandedPosterMovieId(null);
+      return;
+    }
+    setExpandedPosterMovieId(String(movieId));
+  };
+
   const sortedMovies = [...tabMovies].sort((a, b) => (b.avgRating || 0) - (a.avgRating || 0));
 
   const handleSchedule = ({ movie, date, time, location }) => {
@@ -308,6 +623,21 @@ export default function GroupDetailPage({
     onBack?.();
   };
 
+  const handleLeaveGroup = () => {
+    if (!activeGroup) return;
+    const res = leaveGroup(activeGroup.id, currentUserName);
+    if (res.status === "left") {
+      setGroups(readGroups());
+      onBack?.();
+      return;
+    }
+    if (res.status === "creator-cannot-leave") {
+      setActionMsg(
+        "Group creators cannot leave with this button—delete the group instead, or add another leader first."
+      );
+    }
+  };
+
   useEffect(() => {
     if (!activeGroup) return;
     const names = (activeGroup.members || []).map((m) => m.name).filter(Boolean);
@@ -371,10 +701,13 @@ export default function GroupDetailPage({
         .group-meta { display: flex; flex-direction: column; gap: 8px; }
         .group-label { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: #e8c547; font-weight: 500; }
         .group-name { font-family: 'Bebas Neue', sans-serif; font-size: clamp(36px, 5vw, 56px); letter-spacing: 2px; color: #f0ece4; line-height: 1; }
-        .group-actions { display: flex; gap: 10px; align-items: center; }
-        .invite-btn, .delete-btn { padding: 10px 14px; border-radius: 8px; background: transparent; cursor: pointer; font-size: 13px; }
+        .group-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 10px; }
+        .group-actions-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: flex-end; }
+        .invite-btn, .delete-btn, .leave-header-btn { padding: 10px 14px; border-radius: 8px; background: transparent; cursor: pointer; font-size: 13px; font-family: 'DM Sans', sans-serif; font-weight: 500; }
         .invite-btn { border: 1px solid #2f6f95; color: #9fd4ff; }
         .delete-btn { border: 1px solid #7a2b2b; color: #ff9d9d; }
+        .leave-header-btn { border: 1px solid #6a4a2a; color: #e8b89a; }
+        .leave-header-btn:hover { border-color: #c98a5a; color: #ffd4c4; }
         .invite-overlay { position: fixed; inset: 0; z-index: 210; background: rgba(0,0,0,0.72); display: grid; place-items: center; padding: 20px; }
         .invite-modal { width: min(560px, 100%); background: #121212; border: 1px solid #2a2a2a; border-radius: 12px; padding: 16px; }
         .invite-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -387,18 +720,110 @@ export default function GroupDetailPage({
         .tab.active { color: #e8c547; border-bottom-color: #e8c547; }
         .content { padding: 36px 40px 80px; }
         .back-btn { padding: 10px 14px; border: 1px solid #3a3a3a; background: transparent; color: #ddd; border-radius: 8px; cursor: pointer; margin-bottom: 16px; }
-        .section-intro { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+        .section-intro { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; gap: 16px; flex-wrap: wrap; }
+        .section-intro-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; text-align: right; max-width: min(380px, 52vw); }
+        .vote-picks-counter { font-size: 13px; font-weight: 600; color: #e8c547; letter-spacing: 0.04em; white-space: nowrap; }
+        .vote-picks-counter--full { color: #ffb84d; }
         .section-heading { font-family: 'Bebas Neue', sans-serif; font-size: 22px; letter-spacing: 2px; color: #f0ece4; }
         .sort-note { font-size: 12px; color: #555; font-style: italic; }
-        .rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; }
-        .rec-card { background: #111; border: 1px solid #1e1e1e; border-radius: 12px; overflow: hidden; transition: transform 0.25s, box-shadow 0.25s, border-color 0.2s; position: relative; }
-        .rec-card:hover { transform: translateY(-4px); box-shadow: 0 16px 32px rgba(0,0,0,0.5); border-color: #2e2e2e; }
+        .rec-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 20px; align-items: start; }
+        .rec-card-slot {
+          position: relative;
+          z-index: 0;
+          min-width: 0;
+          width: 100%;
+        }
+        .rec-card-slot--expanded {
+          position: relative;
+          z-index: 40;
+          pointer-events: none;
+          isolation: isolate;
+        }
+        .rec-card-expand-host--pass { display: contents; }
+        .rec-card-expand-host:not(.rec-card-expand-host--pass) {
+          position: fixed;
+          inset: 0;
+          z-index: 1;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          padding: min(24px, 4vw);
+          pointer-events: none;
+        }
+        .rec-card-expand-host:not(.rec-card-expand-host--pass) .rec-card {
+          pointer-events: auto;
+          position: relative;
+          z-index: 1;
+        }
+        .rec-card-slot-outline {
+          position: absolute;
+          inset: 0;
+          z-index: 0;
+          border: 2px dashed rgba(232, 197, 71, 0.42);
+          border-radius: 12px;
+          box-sizing: border-box;
+          pointer-events: none;
+          background: transparent;
+        }
+        .rec-card {
+          background: #111;
+          border: 1px solid #1e1e1e;
+          border-radius: 12px;
+          overflow: hidden;
+          transition: box-shadow 0.3s ease, border-color 0.2s;
+          position: relative;
+          width: 100%;
+          min-width: 0;
+          max-width: 100%;
+        }
+        .rec-card--expanded {
+          position: relative;
+          width: min(380px, calc(100vw - 48px));
+          max-width: none;
+          box-shadow: 0 28px 70px rgba(0,0,0,0.88), 0 0 0 1px rgba(255,255,255,0.07);
+          border-color: #4a4a4a;
+          overflow: visible;
+        }
+        .rec-card-hit {
+          cursor: pointer;
+          outline: none;
+        }
+        .rec-card-hit:focus-visible {
+          box-shadow: inset 0 0 0 2px rgba(232,197,71,0.55);
+          border-radius: 12px 12px 0 0;
+        }
         .rec-card.leading { border-color: rgba(232,197,71,0.35); box-shadow: 0 0 0 1px rgba(232,197,71,0.1); }
-        .leading-badge { position: absolute; top: 12px; left: 12px; z-index: 2; background: rgba(232,197,71,0.9); color: #0d0d0d; font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 20px; letter-spacing: 0.5px; }
-        .rec-poster-wrap { aspect-ratio: 16/9; overflow: hidden; }
-        .rec-poster { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform 0.4s; }
-        .rec-card:hover .rec-poster { transform: scale(1.04); }
-        .rec-body { padding: 16px; }
+        .leading-badge { position: absolute; top: 12px; left: 12px; z-index: 3; background: rgba(232,197,71,0.9); color: #0d0d0d; font-size: 11px; font-weight: 500; padding: 4px 10px; border-radius: 20px; letter-spacing: 0.5px; }
+        .rec-poster-wrap {
+          aspect-ratio: 16/9;
+          overflow: hidden;
+          background: #080808;
+          transition: aspect-ratio 0.38s ease, min-height 0.38s ease;
+        }
+        .rec-card--expanded .rec-poster-wrap {
+          aspect-ratio: 2/3;
+          min-height: 280px;
+          max-height: min(72vh, 520px);
+        }
+        .rec-poster {
+          width: 100%;
+          height: 100%;
+          object-fit: cover;
+          display: block;
+          transition: object-fit 0.35s ease, transform 0.35s ease;
+        }
+        .rec-card--expanded .rec-poster {
+          object-fit: contain;
+          transform: none;
+        }
+        .rec-body { padding: 16px; background: #111; position: relative; }
+        .rec-card--expanded .rec-body { box-shadow: 0 -12px 24px rgba(0,0,0,0.4); }
+        .rec-providers { margin-bottom: 8px; line-height: 1.45; }
+        .rec-card--expanded .rec-providers { color: #b0b0b0; }
+        .rec-card-vote {
+          padding: 0 16px 16px;
+          background: #111;
+        }
         .rec-meta { display: flex; gap: 8px; margin-bottom: 6px; }
         .rec-genre { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: #e8c547; background: rgba(232,197,71,0.08); padding: 3px 8px; border-radius: 4px; }
         .rec-year { font-size: 12px; color: #555; align-self: center; }
@@ -411,8 +836,13 @@ export default function GroupDetailPage({
         .vote-bar-fill { height: 100%; background: #e8c547; border-radius: 2px; transition: width 0.6s cubic-bezier(0.4,0,0.2,1); }
         .vote-count { font-size: 12px; color: #555; white-space: nowrap; }
         .vote-btn { width: 100%; padding: 10px; background: #e8c547; color: #0d0d0d; border: none; border-radius: 8px; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; cursor: pointer; }
-        .vote-btn.voted { background: #1e1e1e; color: #666; border: 1px solid #2e2e2e; }
+        .vote-btn.voted { background: #1e1e1e; color: #a8a8a8; border: 1px solid #3a3a3a; }
+        .vote-btn.voted:hover { border-color: rgba(232,197,71,0.45); color: #e8c547; }
+        .vote-btn:disabled { cursor: not-allowed; opacity: 0.52; }
+        .vote-btn.vote-btn--blocked { background: #1a1a1a; color: #666; border: 1px solid #333; }
         .schedule-form { background: #111; border: 1px solid #1e1e1e; border-radius: 12px; padding: 28px; margin-bottom: 32px; }
+        .schedule-empty-hint, .schedule-movie-hint { color: #777; font-size: 14px; line-height: 1.55; margin: 0 0 18px 0; }
+        .schedule-movie-hint { margin-bottom: 16px; }
         .form-title { font-size: 16px; font-weight: 500; color: #f0ece4; margin-bottom: 20px; }
         .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
         .form-field { display: flex; flex-direction: column; gap: 6px; }
@@ -432,7 +862,7 @@ export default function GroupDetailPage({
         .upcoming-badge { font-size: 10px; letter-spacing: 2px; text-transform: uppercase; color: #e8c547; background: rgba(232,197,71,0.08); border: 1px solid rgba(232,197,71,0.2); padding: 4px 10px; border-radius: 20px; }
         .members-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 18px; }
         .member-card { background: #121212; border: 1px solid #222; border-radius: 10px; padding: 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-        .member-left { display: flex; align-items: center; gap: 10px; }
+        .member-left { display: flex; align-items: center; gap: 10px; min-width: 0; }
         .avatar { width: 34px; height: 34px; border-radius: 50%; background: #1e1e1e; border: 1px solid #2e2e2e; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #888; }
         .avatar.creator { border-color: #e8c547; color: #e8c547; }
         .member-role { font-size: 11px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.7px; }
@@ -500,14 +930,25 @@ export default function GroupDetailPage({
           <span className="group-label">Group</span>
           <h1 className="group-name">{activeGroup?.name}</h1>
         </div>
-        {canManageGroup ? (
+        {canSendInvites || canManageGroup || canLeaveGroup ? (
           <div className="group-actions">
-            <button className="invite-btn" type="button" onClick={() => setInviteOpen(true)}>
-              + Invite Member
-            </button>
-            <button className="delete-btn" type="button" onClick={handleDeleteGroup}>
-              Delete Group
-            </button>
+            <div className="group-actions-row">
+              {canSendInvites ? (
+                <button className="invite-btn" type="button" onClick={() => setInviteOpen(true)}>
+                  + Invite Member
+                </button>
+              ) : null}
+              {canLeaveGroup ? (
+                <button type="button" className="leave-header-btn" onClick={handleLeaveGroup}>
+                  Leave group
+                </button>
+              ) : null}
+            </div>
+            {canManageGroup ? (
+              <button className="delete-btn" type="button" onClick={handleDeleteGroup}>
+                Delete Group
+              </button>
+            ) : null}
           </div>
         ) : null}
       </header>
@@ -538,7 +979,12 @@ export default function GroupDetailPage({
           { id: "vote", label: "🗳️ Vote" },
           { id: "schedule", label: "📅 Schedule" },
         ].map((tab) => (
-          <button key={tab.id} className={`tab ${activeTab === tab.id ? "active" : ""}`} onClick={() => setActiveTab(tab.id)}>
+          <button
+            key={tab.id}
+            type="button"
+            className={`tab ${activeTab === tab.id ? "active" : ""}`}
+            onClick={() => setActiveTab(tab.id)}
+          >
             {tab.label}
           </button>
         ))}
@@ -548,18 +994,63 @@ export default function GroupDetailPage({
         <button className="back-btn" type="button" onClick={onBack}>← Back to My Groups</button>
         {actionMsg ? <p className="msg">{actionMsg}</p> : null}
 
+        <div className="section-intro">
+          <h2 className="section-heading">Current Members</h2>
+        </div>
+        <div className="members-grid" style={{ marginBottom: 24 }}>
+          {(activeGroup?.members || []).map((member) => {
+            const isSelf = normalizeName(member.name) === normalizeName(currentUserName);
+            return (
+              <div className="member-card" key={member.id}>
+                <div className="member-left">
+                  <div className={`avatar ${member.role === "creator" ? "creator" : ""}`}>
+                    {member.avatar || member.name?.charAt(0)?.toUpperCase() || "U"}
+                  </div>
+                  <div>
+                    <p>
+                      {member.name} {member.role === "creator" ? "👑" : ""}
+                    </p>
+                    <p className="member-role">
+                      {member.role}
+                      {isSelf ? " • You" : ""}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
         {activeTab === "recommendations" && (
           <>
             <div className="section-intro">
               <h2 className="section-heading">Top Picks for Your Group</h2>
-              <span className="sort-note">Ranked by genre match to members&apos; tastes + catalog</span>
+              <div className="section-intro-meta">
+                <span
+                  className={`vote-picks-counter${userPicksCount >= MAX_USER_VOTE_PICKS ? " vote-picks-counter--full" : ""}`}
+                >
+                  Your picks: {userPicksCount} / {MAX_USER_VOTE_PICKS}
+                </span>
+                <span className="sort-note">Ranked by genre match to members&apos; tastes + catalog</span>
+              </div>
             </div>
             <div className="rec-grid">
               {sortedMovies.length === 0 ? (
                 <p style={{ color: "#666" }}>No recommendations yet.</p>
               ) : (
                 sortedMovies.map((movie) => (
-                  <RecommendationCard key={movie.id} movie={movie} maxVotes={maxVotes} onVote={handleVote} />
+                  <RecommendationCard
+                    key={movie.id}
+                    movie={movie}
+                    maxVotes={maxVotes}
+                    onVote={handleVote}
+                    expanded={expandedPosterMovieId != null && String(expandedPosterMovieId) === String(movie.id)}
+                    onExpandToggle={(intent) => handlePosterExpandIntent(movie.id, intent)}
+                    expandFromGridRectRef={expandFromGridRectRef}
+                    userPicksCount={userPicksCount}
+                    maxUserPicks={MAX_USER_VOTE_PICKS}
+                    soleLeaderId={soleLeaderMovieId}
+                  />
                 ))
               )}
             </div>
@@ -569,20 +1060,44 @@ export default function GroupDetailPage({
         {activeTab === "vote" && (
           <>
             <div className="section-intro">
-              <h2 className="section-heading">Cast Your Vote</h2>
-              <span className="sort-note">One vote per movie</span>
+              <h2 className="section-heading">Vote leaderboard</h2>
+              <div className="section-intro-meta">
+                <span
+                  className={`vote-picks-counter${userPicksCount >= MAX_USER_VOTE_PICKS ? " vote-picks-counter--full" : ""}`}
+                >
+                  Your picks: {userPicksCount} / {MAX_USER_VOTE_PICKS}
+                </span>
+                <span className="sort-note">
+                  Up to 10 titles with at least one vote (highest first). Vote on Recommendations to add titles here.
+                </span>
+              </div>
             </div>
             <div className="rec-grid">
-              {[...tabMovies].sort((a, b) => (b.votes || 0) - (a.votes || 0)).map((movie) => (
-                <RecommendationCard key={movie.id} movie={movie} maxVotes={maxVotes} onVote={handleVote} />
-              ))}
+              {voteTabMovies.length === 0 ? (
+                <p style={{ color: "#666" }}>No votes yet. Open the Recommendations tab and vote for picks you want on the shortlist.</p>
+              ) : (
+                voteTabMovies.map((movie) => (
+                  <RecommendationCard
+                    key={movie.id}
+                    movie={movie}
+                    maxVotes={maxVoteTabVotes}
+                    onVote={handleVote}
+                    expanded={expandedPosterMovieId != null && String(expandedPosterMovieId) === String(movie.id)}
+                    onExpandToggle={(intent) => handlePosterExpandIntent(movie.id, intent)}
+                    expandFromGridRectRef={expandFromGridRectRef}
+                    userPicksCount={userPicksCount}
+                    maxUserPicks={MAX_USER_VOTE_PICKS}
+                    soleLeaderId={soleLeaderMovieId}
+                  />
+                ))
+              )}
             </div>
           </>
         )}
 
         {activeTab === "schedule" && (
           <>
-            <ScheduleForm onSchedule={handleSchedule} movies={tabMovies} />
+            <ScheduleForm onSchedule={handleSchedule} movies={votedMovies} />
             <div className="section-intro" style={{ marginTop: 8 }}>
               <h2 className="section-heading">Upcoming Sessions</h2>
             </div>
@@ -597,30 +1112,6 @@ export default function GroupDetailPage({
             )}
           </>
         )}
-
-        <div className="section-intro" style={{ marginTop: 24 }}>
-          <h2 className="section-heading">Current Members</h2>
-        </div>
-        <div className="members-grid">
-          {(activeGroup?.members || []).map((member) => (
-            <div className="member-card" key={member.id}>
-              <div className="member-left">
-                <div className={`avatar ${member.role === "creator" ? "creator" : ""}`}>
-                  {member.avatar || member.name?.charAt(0)?.toUpperCase() || "U"}
-                </div>
-                <div>
-                  <p>
-                    {member.name} {member.role === "creator" ? "👑" : ""}
-                  </p>
-                  <p className="member-role">
-                    {member.role}
-                    {normalizeName(member.name) === normalizeName(currentUserName) ? " • You" : ""}
-                  </p>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
       </main>
     </>
   );

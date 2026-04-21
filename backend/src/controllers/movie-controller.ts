@@ -72,10 +72,16 @@ export function getWatchlist(req: Request, res: Response): Promise<void> {
   return Promise.resolve(); // TODO
 }
 
-export function markWatched(req: Request, res: Response): Promise<void> {
-  return Promise.resolve(); // TODO
+export async function markWatched(req: Request, res: Response): Promise<void> {
+  await movieService.markWatched(req.userId!, req.body);
+  res.status(204).send();
 }
 
-export function getMyRatings(req: Request, res: Response): Promise<void> {
-  return Promise.resolve(); // TODO
+export async function getMyRatings(req: Request, res: Response): Promise<void> {
+  const list = await movieService.getRatings(req.userId!);
+  const ratings: Record<string, number> = {};
+  for (const { tmdbId, rating } of list) {
+    ratings[String(tmdbId)] = rating;
+  }
+  res.json({ ratings });
 }

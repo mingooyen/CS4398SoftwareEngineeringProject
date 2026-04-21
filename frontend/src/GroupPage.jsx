@@ -144,6 +144,18 @@ export default function GroupPage({
         .group-name { font-size: 15px; }
         .muted { color: #8f8f8f; font-size: 12px; }
         .empty { color: #666; font-size: 13px; padding: 4px 0; }
+        .public-group-warning {
+          margin-top: 14px;
+          padding: 12px 14px;
+          border-radius: 10px;
+          border: 1px solid rgba(232, 160, 71, 0.4);
+          background: rgba(90, 48, 22, 0.35);
+          color: #e8d4b0;
+          font-size: 13px;
+          line-height: 1.5;
+          max-width: 720px;
+        }
+        .public-group-warning strong { color: #f0d090; font-weight: 600; }
       `}</style>
       <div className="gp-shell">
         <nav className="nav">
@@ -212,6 +224,13 @@ export default function GroupPage({
               </label>
               <button className="btn" type="button" onClick={handleCreate}>Create</button>
             </div>
+            {!isPrivate ? (
+              <p className="public-group-warning" role="status">
+                <strong>Public group:</strong> any member can invite people by name, and anyone who learns this
+                group&apos;s ID can join from the My Groups page without your approval. Turn on{" "}
+                <strong>Private group</strong> if only you (the leader) should send invites and approve new members.
+              </p>
+            ) : null}
           </section>
 
           <section className="card">

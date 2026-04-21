@@ -6,6 +6,7 @@ import {
   denyInvite,
   denyFriendRequest,
   normalizeName,
+  readFriendLinks,
   readFriendNotifications,
   readFriendRequests,
   readInvites,
@@ -37,6 +38,10 @@ const HOME_BROWSE_PRESETS = [
 function StarRating({ movieId, initialRating, onRate }) {
   const [hovered, setHovered] = useState(0);
   const [selected, setSelected] = useState(initialRating || 0);
+
+  useEffect(() => {
+    setSelected(initialRating || 0);
+  }, [movieId, initialRating]);
 
   const handleRate = (score) => {
     setSelected(score);
@@ -157,12 +162,18 @@ export default function HomePage({
   const [friendNotifications, setFriendNotifications] = useState(() => readFriendNotifications());
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  const [friendsRailOpen, setFriendsRailOpen] = useState(false);
   const [friendsQuery, setFriendsQuery] = useState("");
   const [friendResults, setFriendResults] = useState([]);
+  const friendsSearchAbortRef = useRef(null);
   const [movies, setMovies] = useState([]);
   const [browseGenres, setBrowseGenres] = useState([]);
   /** Logged-in user: `GET /users/me/preferences` → favoriteGenres */
   const [savedFavoriteGenres, setSavedFavoriteGenres] = useState([]);
+  /** Genres removed from the For you mix (persisted); rating-inferred genres stay out until cleared. */
+  const [savedExcludedGenres, setSavedExcludedGenres] = useState([]);
+  const savedFavRef = useRef([]);
+  const savedExclRef = useRef([]);
   /** Latest TMDB genre id[] per movie id (ref only—avoid discover refetch loops). */
   const movieGenresByIdRef = useRef({});
   /** Preset from HOME_BROWSE_PRESETS when no genre chip is selected */
@@ -186,10 +197,38 @@ export default function HomePage({
     (note) => normalizeName(note.userName) === normalizeName(highlightedName || "")
   );
 
+  /** Server friends (Mongo friendships) with `isOnline` from presence JSON. */
+  const [apiFriends, setApiFriends] = useState([]);
+
+  const railFriendsList = useMemo(() => {
+    const self = normalizeName(highlightedName || "");
+    const fromApi = (apiFriends || []).map((f) => ({
+      userId: String(f.userId || ""),
+      displayName: f.displayName,
+      isOnline: Boolean(f.isOnline),
+    }));
+    const apiNames = new Set(fromApi.map((f) => normalizeName(f.displayName)));
+    const fromLocal = self
+        ? readFriendLinks()
+            .filter((l) => normalizeName(l.userName) === self)
+            .filter((l) => !apiNames.has(normalizeName(l.friendName || "")))
+            .map((l) => ({
+              userId: String(l.friendId || ""),
+              displayName: l.friendName,
+              isOnline: false,
+            }))
+        : [];
+    return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [apiFriends, highlightedName, friendRequests]);
+
+  const railOnlineCount = useMemo(
+    () => railFriendsList.filter((f) => f.isOnline).length,
+    [railFriendsList]
+  );
+
   const navItems = isAuthenticated
     ? [
         "Home",
-        "Friends",
         "My Groups",
         "Watchlist",
         ...(isSystemAdmin ? ["Admin"] : []),
@@ -210,10 +249,71 @@ export default function HomePage({
     : filtered;
 
   const handleRate = (movieId, score) => {
-    setRatings((prev) => ({ ...prev, [movieId]: score }));
+    const idKey = String(movieId);
+    setRatings((prev) => ({ ...prev, [idKey]: score }));
 
-    // Database integration hook:
-    // send { userId, movieId, rating, ratedAt } to a backend ratings endpoint.
+    if (isAuthenticated && accessToken) {
+      fetch("http://localhost:3000/api/v1/movies/watched", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tmdbId: Number(movieId), rating: Number(score) }),
+      })
+        .then((res) => {
+          if (!res.ok) return null;
+          return fetch("http://localhost:3000/api/v1/movies/ratings", {
+            headers: { Authorization: `Bearer ${accessToken}` },
+          });
+        })
+        .then((res) => (res && res.ok ? res.json() : null))
+        .then((payload) => {
+          if (payload?.ratings && typeof payload.ratings === "object") {
+            setRatings(payload.ratings);
+          }
+        })
+        .catch(() => {});
+    }
+
+    if (!isAuthenticated || !accessToken) return;
+    if (Number(score) < 4) return;
+    const movie = movies.find((m) => String(m.id) === idKey);
+    const gids = movie?.genres;
+    if (!Array.isArray(gids) || !gids.length || !browseGenres.length) return;
+    const idToName = new Map(browseGenres.map((g) => [Number(g.id), g.name]));
+    const names = [...new Set(gids.map((gid) => idToName.get(Number(gid))).filter(Boolean))];
+    if (!names.length) return;
+
+    const fav = savedFavRef.current;
+    const excl = savedExclRef.current;
+    const seen = new Set(fav.map((x) => x.toLowerCase()));
+    const nextFav = [...fav];
+    let added = false;
+    for (const nm of names) {
+      const key = nm.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      nextFav.push(nm);
+      added = true;
+    }
+    if (!added) return;
+
+    fetch("http://localhost:3000/api/v1/users/me", {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        preferences: { favoriteGenres: nextFav },
+      }),
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then(() => {
+        setSavedFavoriteGenres(nextFav);
+      })
+      .catch(() => {});
   };
 
   const handleWatchlist = (movieId, added) => {
@@ -239,8 +339,6 @@ export default function HomePage({
       onNavigate("signup");
     } else if (item === "Admin") {
       onOpenAdmin?.();
-    } else if (item === "Friends") {
-      setFriendsOpen(true);
     } else {
       onHomeNavChange(item);
     }
@@ -289,42 +387,97 @@ export default function HomePage({
   }, [highlightedName]);
 
   useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      setApiFriends([]);
+      return;
+    }
+    const loadFriends = () => {
+      fetch("http://localhost:3000/api/v1/users/friends", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (Array.isArray(payload?.friends)) setApiFriends(payload.friends);
+          else setApiFriends([]);
+        })
+        .catch(() => setApiFriends([]));
+    };
+    loadFriends();
+    const id = setInterval(loadFriends, 12000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, accessToken, friendRequests, friendsRailOpen]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) return;
+    const ping = () => {
+      fetch("http://localhost:3000/api/v1/users/me/presence", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).catch(() => {});
+    };
+    ping();
+    const id = setInterval(ping, 25000);
+    return () => clearInterval(id);
+  }, [isAuthenticated, accessToken]);
+
+  useEffect(() => {
     if (!isAuthenticated && homeNav === "Watchlist") {
       onHomeNavChange("Home");
     }
   }, [isAuthenticated, homeNav, onHomeNavChange]);
-  useEffect(() => {
-    if (!friendsOpen) return;
+  const runFriendsSearch = useCallback(() => {
+    if (!accessToken) {
+      setFriendResults([]);
+      return;
+    }
     const q = friendsQuery.trim();
     if (!q) {
       setFriendResults([]);
       return;
     }
 
-    if (!accessToken) {
-      setFriendResults([]);
-      return;
-    }
+    friendsSearchAbortRef.current?.abort();
+    const ac = new AbortController();
+    friendsSearchAbortRef.current = ac;
 
     fetch(
       `http://localhost:3000/api/v1/users/search?q=${encodeURIComponent(q)}&limit=25`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
+      { headers: { Authorization: `Bearer ${accessToken}` }, signal: ac.signal }
     )
       .then((res) => (res.ok ? res.json() : null))
       .then((payload) => {
+        if (ac.signal.aborted) return;
         if (Array.isArray(payload?.users)) {
-          const apiUsers = payload.users.map((user) => ({
-            id: String(user.id),
-            displayName: user.displayName,
-            source: "Directory",
-          })).filter(
-            (user) => !isSelfFriend(user.displayName) && !isUserBannedForFriend(user)
-          );
+          const apiUsers = payload.users
+            .map((user) => ({
+              id: String(user.id),
+              displayName: user.displayName,
+              numericId:
+                user.numericId != null && Number.isFinite(Number(user.numericId))
+                  ? Number(user.numericId)
+                  : null,
+              source: "Directory",
+            }))
+            .filter(
+              (user) => !isSelfFriend(user.displayName) && !isUserBannedForFriend(user)
+            );
           setFriendResults(apiUsers);
+        } else {
+          setFriendResults([]);
         }
       })
-      .catch(() => {});
-  }, [friendsOpen, friendsQuery, accessToken, highlightedName, adminTick]);
+      .catch((err) => {
+        if (err?.name === "AbortError") return;
+      });
+  }, [friendsQuery, accessToken, highlightedName]);
+
+  useEffect(() => {
+    if (!friendsOpen) {
+      friendsSearchAbortRef.current?.abort();
+      friendsSearchAbortRef.current = null;
+      setFriendResults([]);
+    }
+  }, [friendsOpen]);
 
   useEffect(() => {
     fetch("http://localhost:3000/api/v1/movies/genres")
@@ -338,8 +491,16 @@ export default function HomePage({
   }, []);
 
   useEffect(() => {
+    savedFavRef.current = savedFavoriteGenres;
+  }, [savedFavoriteGenres]);
+  useEffect(() => {
+    savedExclRef.current = savedExcludedGenres;
+  }, [savedExcludedGenres]);
+
+  useEffect(() => {
     if (!isAuthenticated || !accessToken) {
       setSavedFavoriteGenres([]);
+      setSavedExcludedGenres([]);
       return;
     }
     fetch("http://localhost:3000/api/v1/users/me/preferences", {
@@ -348,10 +509,32 @@ export default function HomePage({
       .then((res) => (res.ok ? res.json() : null))
       .then((payload) => {
         const g = payload?.preferences?.favoriteGenres;
+        const x = payload?.preferences?.forYouExcludedGenres;
         setSavedFavoriteGenres(Array.isArray(g) ? g.filter(Boolean) : []);
+        setSavedExcludedGenres(Array.isArray(x) ? x.filter(Boolean) : []);
       })
-      .catch(() => setSavedFavoriteGenres([]));
-  }, [isAuthenticated, accessToken, highlightedName]);
+      .catch(() => {
+        setSavedFavoriteGenres([]);
+        setSavedExcludedGenres([]);
+      });
+  }, [isAuthenticated, accessToken]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) {
+      setRatings({});
+      return;
+    }
+    fetch("http://localhost:3000/api/v1/movies/ratings", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (payload?.ratings && typeof payload.ratings === "object") {
+          setRatings(payload.ratings);
+        }
+      })
+      .catch(() => {});
+  }, [isAuthenticated, accessToken]);
 
   const mergeForYouGenreNames = useCallback((idLookup) => {
     if (!isAuthenticated) return [];
@@ -372,16 +555,51 @@ export default function HomePage({
         merged.push(name);
       }
     }
-    return merged;
-  }, [isAuthenticated, browseGenres, savedFavoriteGenres, ratings]);
+    const excluded = new Set((savedExcludedGenres || []).map((s) => s.toLowerCase()));
+    return merged.filter((g) => !excluded.has(g.toLowerCase()));
+  }, [isAuthenticated, browseGenres, savedFavoriteGenres, savedExcludedGenres, ratings]);
 
   const forYouTasteLabels = useMemo(
     () =>
-      mergeForYouGenreNames((movieId) => {
-        const m = movies.find((x) => String(x.id) === movieId);
-        return m?.genres;
-      }),
+      mergeForYouGenreNames(
+        (movieId) =>
+          movieGenresByIdRef.current[String(movieId)] ??
+          movies.find((x) => String(x.id) === String(movieId))?.genres
+      ),
     [mergeForYouGenreNames, movies]
+  );
+
+  const removeForYouGenre = useCallback(
+    async (name) => {
+      if (!accessToken) return;
+      const k = name.toLowerCase();
+      const prevFav = savedFavRef.current;
+      const prevExcl = savedExclRef.current;
+      const nextFav = prevFav.filter((g) => g.toLowerCase() !== k);
+      const nextExcl = prevExcl.some((e) => e.toLowerCase() === k) ? [...prevExcl] : [...prevExcl, name];
+      setSavedFavoriteGenres(nextFav);
+      setSavedExcludedGenres(nextExcl);
+      try {
+        const res = await fetch("http://localhost:3000/api/v1/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            preferences: { favoriteGenres: nextFav, forYouExcludedGenres: nextExcl },
+          }),
+        });
+        if (!res.ok) {
+          setSavedFavoriteGenres(prevFav);
+          setSavedExcludedGenres(prevExcl);
+        }
+      } catch {
+        setSavedFavoriteGenres(prevFav);
+        setSavedExcludedGenres(prevExcl);
+      }
+    },
+    [accessToken]
   );
 
   useEffect(() => {
@@ -389,6 +607,9 @@ export default function HomePage({
   }, [homeNav, browsePreset, selectedGenreName, highlightedName, query]);
 
   useEffect(() => {
+    const ac = new AbortController();
+    const { signal } = ac;
+
     let browseNames = [];
     let sortBy = null;
     if (homeNav === "Home") {
@@ -432,9 +653,13 @@ export default function HomePage({
       movieGenresByIdRef.current = next;
     };
 
-    fetch(`http://localhost:3000/api/v1/movies/discover?${q.toString()}`)
-      .then((res) => (res.ok ? res.json() : null))
+    fetch(`http://localhost:3000/api/v1/movies/discover?${q.toString()}`, { signal })
+      .then((res) => {
+        if (signal.aborted) return null;
+        return res.ok ? res.json() : null;
+      })
       .then((payload) => {
+        if (signal.aborted) return;
         const raw = Array.isArray(payload?.movies) ? payload.movies : [];
         const dedup = [];
         const seen = new Set();
@@ -453,15 +678,19 @@ export default function HomePage({
           setMovies(offlineList);
         }
       })
-      .catch(() => {
+      .catch((err) => {
+        if (signal.aborted || err?.name === "AbortError") return;
         const offlineList = buildOfflineMovies(browseNames, fetchLimit, offlineSort);
         applyMovieMeta(offlineList);
         setMovies(offlineList);
       });
+
+    return () => ac.abort();
   }, [
     mergeForYouGenreNames,
     isAuthenticated,
     savedFavoriteGenres,
+    savedExcludedGenres,
     ratings,
     browseGenres,
     homeNav,
@@ -579,23 +808,55 @@ export default function HomePage({
           background: #121212;
           border: 1px solid #232323;
           border-radius: 10px;
-          padding: 10px;
+          padding: 12px 14px;
+          display: grid;
+          grid-template-columns: minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 16px;
+        }
+        .friend-meta {
+          display: flex;
+          align-items: flex-start;
+          gap: 10px;
+          min-width: 0;
+          grid-column: 1;
+        }
+        .friend-meta-text { min-width: 0; }
+        .friend-card .avatar,
+        .friends-rail-row .avatar {
+          width: 40px;
+          height: 40px;
+          border-radius: 50%;
+          background: #1e1e1e;
+          border: 1px solid #2e2e2e;
           display: flex;
           align-items: center;
-          justify-content: space-between;
-          gap: 10px;
+          justify-content: center;
+          font-size: 15px;
+          font-weight: 600;
+          color: #c5c5c5;
+          flex-shrink: 0;
         }
-        .friend-meta { display: flex; align-items: center; gap: 10px; }
         .friend-name { color: #f0ece4; font-size: 14px; }
-        .friend-source { color: #8a8a8a; font-size: 11px; }
+        .friend-source { color: #8a8a8a; font-size: 11px; word-break: break-word; }
         .friend-invite-btn {
+          grid-column: 2;
+          justify-self: end;
           border: 1px solid #2f6f95;
           color: #9fd4ff;
           background: transparent;
           border-radius: 8px;
-          padding: 8px 10px;
+          padding: 10px 18px;
+          min-height: 42px;
           cursor: pointer;
-          font-size: 12px;
+          font-size: 13px;
+          font-weight: 600;
+          white-space: nowrap;
+        }
+        .friends-results {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
         }
         .friend-invite-btn:disabled {
           border-color: #3a3a3a;
@@ -636,15 +897,231 @@ export default function HomePage({
           color: #bbb;
           cursor: pointer;
         }
+        .friends-search-row {
+          display: flex;
+          align-items: stretch;
+          gap: 10px;
+          margin-bottom: 12px;
+        }
         .friends-search {
-          width: 100%;
+          flex: 1;
+          min-width: 0;
           background: #161616;
           border: 1px solid #2a2a2a;
           border-radius: 8px;
           color: #f0ece4;
           font-size: 14px;
           padding: 10px 12px;
-          margin-bottom: 12px;
+        }
+        .friends-search-btn {
+          flex-shrink: 0;
+          padding: 0 20px;
+          border-radius: 8px;
+          border: 1px solid #e8c547;
+          background: rgba(232, 197, 71, 0.12);
+          color: #e8c547;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 14px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .friends-search-btn:hover:not(:disabled) {
+          background: rgba(232, 197, 71, 0.2);
+        }
+        .friends-search-btn:disabled {
+          opacity: 0.45;
+          cursor: default;
+        }
+
+        .home-page-body {
+          transition: padding-right 0.28s ease;
+        }
+        .home-page-body.has-friends-rail {
+          padding-right: 50px;
+        }
+        .home-page-body.has-friends-rail.rail-open {
+          padding-right: min(330px, calc(100vw - 24px));
+        }
+        .friends-rail {
+          position: fixed;
+          top: 64px;
+          right: 0;
+          bottom: 0;
+          z-index: 85;
+          display: flex;
+          flex-direction: row-reverse;
+          pointer-events: none;
+        }
+        .friends-rail > * {
+          pointer-events: auto;
+        }
+        .friends-rail-handle {
+          position: relative;
+          z-index: 2;
+          width: 50px;
+          flex-shrink: 0;
+          border: none;
+          border-left: 1px solid #2a2a2a;
+          background: linear-gradient(180deg, #1c1c1c 0%, #141414 100%);
+          color: #e8c547;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 11px;
+          font-weight: 600;
+          line-height: 1.15;
+          letter-spacing: 0.3px;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 10px 3px;
+          box-shadow: -6px 0 18px rgba(0,0,0,0.35);
+        }
+        .friends-rail-handle-icon-wrap {
+          position: relative;
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #e8c547;
+        }
+        .friends-rail-handle-svg {
+          width: 24px;
+          height: 24px;
+          flex-shrink: 0;
+        }
+        .friends-rail-handle-badge {
+          position: absolute;
+          top: -3px;
+          right: -7px;
+          min-width: 17px;
+          height: 17px;
+          padding: 0 4px;
+          border-radius: 999px;
+          background: #2a2a2a;
+          color: #888;
+          font-size: 9px;
+          font-weight: 700;
+          line-height: 17px;
+          text-align: center;
+          border: 1px solid #3a3a3a;
+        }
+        .friends-rail-handle-badge.lit {
+          background: #153524;
+          color: #8ef0b0;
+          border-color: #2ecc71;
+        }
+        .friends-rail-handle-active-line {
+          font-size: 9px;
+          font-weight: 600;
+          color: #666;
+          letter-spacing: 0.02em;
+        }
+        .friends-rail-handle-active-line.on {
+          color: #6ee7a8;
+        }
+        .friends-rail-handle-chev {
+          font-size: 14px;
+          color: #aaa;
+        }
+        .friends-rail-handle:hover {
+          background: linear-gradient(180deg, #242424 0%, #1a1a1a 100%);
+        }
+        .friends-rail-panel {
+          width: min(280px, calc(100vw - 50px));
+          background: #121212;
+          border-left: 1px solid #2a2a2a;
+          box-shadow: -12px 0 32px rgba(0,0,0,0.45);
+          transform: translateX(100%);
+          transition: transform 0.28s ease;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .friends-rail.open .friends-rail-panel {
+          transform: translateX(0);
+          pointer-events: auto;
+        }
+        .friends-rail-head {
+          padding: 14px 16px 10px;
+          border-bottom: 1px solid #232323;
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 8px;
+        }
+        .friends-rail-head-titles {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          min-width: 0;
+        }
+        .friends-rail-title {
+          font-size: 15px;
+          font-weight: 600;
+          color: #f0ece4;
+        }
+        .friends-rail-sub {
+          font-size: 11px;
+          color: #6ee7a8;
+          font-weight: 500;
+        }
+        .friends-rail-sub.muted {
+          color: #666;
+        }
+        .friends-rail-count {
+          font-size: 11px;
+          color: #888;
+          background: #1a1a1a;
+          padding: 3px 8px;
+          border-radius: 999px;
+        }
+        .friends-rail-list {
+          overflow-y: auto;
+          padding: 12px;
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .friends-rail-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 12px;
+          background: #161616;
+          border: 1px solid #252525;
+          border-radius: 10px;
+        }
+        .friends-rail-online {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #4a4a4a;
+          flex-shrink: 0;
+        }
+        .friends-rail-online.on {
+          background: #2ecc71;
+          box-shadow: 0 0 8px rgba(46, 204, 113, 0.45);
+        }
+        .friends-rail-name {
+          font-size: 14px;
+          color: #f0ece4;
+          font-weight: 500;
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        .friends-rail-empty {
+          font-size: 13px;
+          color: #666;
+          line-height: 1.5;
+          padding: 8px 4px;
         }
         .nav-link {
           background: none;
@@ -661,6 +1138,35 @@ export default function HomePage({
         }
         .nav-link:hover { color: #f0ece4; background: #1a1a1a; }
         .nav-link.active { color: #e8c547; background: rgba(232,197,71,0.08); }
+
+        .friends-find-in-panel {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          width: calc(100% - 24px);
+          margin: 0 12px 12px;
+          padding: 10px 14px;
+          border-radius: 10px;
+          border: 1px solid #e8c547;
+          background: rgba(232, 197, 71, 0.1);
+          color: #e8c547;
+          font-family: 'DM Sans', sans-serif;
+          font-size: 13px;
+          font-weight: 600;
+          cursor: pointer;
+          flex-shrink: 0;
+          transition: background 0.15s, border-color 0.15s;
+        }
+        .friends-find-in-panel:hover {
+          background: rgba(232, 197, 71, 0.18);
+          border-color: #f0dc7a;
+        }
+        .friends-find-in-panel svg {
+          width: 20px;
+          height: 20px;
+          flex-shrink: 0;
+        }
 
         .hero {
           padding: 72px 40px 48px;
@@ -740,11 +1246,36 @@ export default function HomePage({
           color: #f0ece4;
         }
         .result-count { font-size: 13px; color: #555; }
+        .genre-chip-head-row {
+          display: flex;
+          justify-content: space-between;
+          align-items: flex-end;
+          gap: 16px;
+          margin-bottom: 6px;
+        }
+        .genre-chip-head-row .genre-chip-hint {
+          width: auto;
+          flex: 1;
+          min-width: 0;
+          margin-bottom: 0;
+        }
+        .result-count--genre-corner {
+          flex-shrink: 0;
+          text-align: right;
+          white-space: nowrap;
+          font-size: 12px;
+          color: #7a7a7a;
+          font-weight: 500;
+          letter-spacing: 0.02em;
+          padding-bottom: 1px;
+        }
 
         .now-filters-wrap {
           padding: 0 40px 16px;
           max-width: 1200px;
           margin: 0 auto;
+          position: relative;
+          z-index: 2;
         }
         .now-filter-tabs {
           display: flex;
@@ -817,13 +1348,29 @@ export default function HomePage({
           font-size: 11px;
         }
         .foryou-taste-chip {
-          display: inline-block;
-          padding: 4px 10px;
+          display: inline-flex;
+          align-items: center;
+          gap: 5px;
+          padding: 4px 8px 4px 10px;
           border-radius: 999px;
           border: 1px solid #3a3a3a;
           background: #161616;
           color: #e8c547;
           font-size: 12px;
+          font-family: inherit;
+          cursor: pointer;
+          transition: border-color 0.15s, color 0.15s, background 0.15s;
+        }
+        .foryou-taste-chip:hover {
+          border-color: #8b4a4a;
+          color: #ffbdbd;
+          background: #1f1414;
+        }
+        .foryou-taste-chip-x {
+          font-size: 13px;
+          font-weight: 700;
+          line-height: 1;
+          opacity: 0.75;
         }
         .genre-chip-row {
           display: flex;
@@ -1023,6 +1570,13 @@ export default function HomePage({
           .hero { padding: 48px 20px 36px; }
           .grid { padding: 0 20px 60px; }
           .section-header { padding: 0 20px; }
+          .genre-chip-head-row {
+            flex-wrap: wrap;
+          }
+          .result-count--genre-corner {
+            width: 100%;
+            text-align: right;
+          }
           .now-filters-wrap { padding: 0 20px 14px; }
           .expand-wrap { padding: 8px 20px 40px; }
         }
@@ -1144,6 +1698,11 @@ export default function HomePage({
         </div>
       </nav>
 
+      <div
+        className={`home-page-body${isAuthenticated ? " has-friends-rail" : ""}${
+          friendsRailOpen ? " rail-open" : ""
+        }`}
+      >
       {/* HERO + SEARCH */}
       <section className="hero">
         <h1 className="hero-title">
@@ -1171,11 +1730,13 @@ export default function HomePage({
               ? "My Watchlist"
               : "Now Showing"}
         </h2>
-        <span className="result-count">
-          {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK
-            ? `${displayedMovies.length} of ${filtered.length} movies`
-            : `${filtered.length} movies`}
-        </span>
+        {homeNav === "Home" && !query.trim() ? null : (
+          <span className="result-count">
+            {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK
+              ? `${displayedMovies.length} of ${filtered.length} movies`
+              : `${filtered.length} movies`}
+          </span>
+        )}
       </div>
 
       {homeNav === "Home" && !query.trim() ? (
@@ -1207,26 +1768,42 @@ export default function HomePage({
                   to personalize this list. Until then, you will see the same broad picks as Trending.
                 </p>
               ) : forYouTasteLabels.length > 0 ? (
-                <p className="foryou-taste-line">
+                <div className="foryou-taste-line" role="group" aria-label="Your For you mix">
                   <span className="foryou-taste-label">Your For you mix</span>
-                  {forYouTasteLabels.map((name) => (
-                    <span key={name} className="foryou-taste-chip">
+                  {forYouTasteLabels.map((name, idx) => (
+                    <button
+                      key={`${name}-${idx}`}
+                      type="button"
+                      className="foryou-taste-chip"
+                      onClick={() => removeForYouGenre(name)}
+                      aria-label={`Remove ${name} from your For you mix`}
+                    >
                       {name}
-                    </span>
+                      <span className="foryou-taste-chip-x" aria-hidden>
+                        ×
+                      </span>
+                    </button>
                   ))}
-                </p>
+                </div>
               ) : (
-                <p className="foryou-taste-line foryou-taste-muted">
+                <div className="foryou-taste-line foryou-taste-muted">
                   Add favorite genres to your account or rate any title here 4★+—until then, we are showing general
                   trending-style picks.
-                </p>
+                </div>
               )}
             </div>
           ) : null}
-          <div>
-            <p className="genre-chip-hint">
-              Pick a list above, then narrow with genre or theme chips — scroll sideways for more.
-            </p>
+          <div className="genre-chips-section">
+            <div className="genre-chip-head-row">
+              <p className="genre-chip-hint">
+                Pick a list above, then narrow with genre or theme chips — scroll sideways for more.
+              </p>
+              <span className="result-count result-count--genre-corner">
+                {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK
+                  ? `${displayedMovies.length} of ${filtered.length} movies`
+                  : `${filtered.length} movies`}
+              </span>
+            </div>
             <div className="genre-chip-row">
               {[...(browseGenres.length ? browseGenres : [])]
                 .sort((a, b) => a.name.localeCompare(b.name))
@@ -1288,6 +1865,107 @@ export default function HomePage({
           </button>
         </div>
       ) : null}
+      </div>
+
+      {isAuthenticated ? (
+        <div className={`friends-rail${friendsRailOpen ? " open" : ""}`} aria-label="My friends">
+          <button
+            type="button"
+            className="friends-rail-handle"
+            onClick={() => setFriendsRailOpen((o) => !o)}
+            aria-expanded={friendsRailOpen}
+            aria-label={`Friends, ${railOnlineCount} active`}
+          >
+            <span className="friends-rail-handle-icon-wrap" aria-hidden>
+              <svg
+                className="friends-rail-handle-svg"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.65"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="3.5" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              <span className={`friends-rail-handle-badge${railOnlineCount > 0 ? " lit" : ""}`}>
+                {railOnlineCount > 99 ? "99+" : railOnlineCount}
+              </span>
+            </span>
+            <span>Friends</span>
+            <span
+              className={`friends-rail-handle-active-line${railOnlineCount > 0 ? " on" : ""}`}
+              aria-hidden
+            >
+              {railOnlineCount} active
+            </span>
+            <span className="friends-rail-handle-chev" aria-hidden>
+              {friendsRailOpen ? "◀" : "▶"}
+            </span>
+          </button>
+          <aside className="friends-rail-panel">
+            <div className="friends-rail-head">
+              <div className="friends-rail-head-titles">
+                <span className="friends-rail-title">Your friends</span>
+                <span className={`friends-rail-sub${railOnlineCount > 0 ? "" : " muted"}`}>
+                  {railOnlineCount} of {railFriendsList.length} active
+                </span>
+              </div>
+              <span className="friends-rail-count">{railFriendsList.length}</span>
+            </div>
+            <button
+              type="button"
+              className="friends-find-in-panel"
+              onClick={() => {
+                setFriendsRailOpen(false);
+                setFriendsOpen(true);
+              }}
+              aria-label="Find friends"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.65"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden
+              >
+                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="3.5" />
+                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+              Find friends
+            </button>
+            <div className="friends-rail-list">
+              {railFriendsList.length === 0 ? (
+                <p className="friends-rail-empty">
+                  No friends yet. Accept a request from the bell, use Friends search, or add someone in the app.
+                </p>
+              ) : (
+                railFriendsList.map((f) => (
+                  <div key={`${f.userId}-${f.displayName}`} className="friends-rail-row">
+                    <span
+                      className={`friends-rail-online${f.isOnline ? " on" : ""}`}
+                      title={f.isOnline ? "Online" : "Offline"}
+                      aria-label={f.isOnline ? "Online" : "Offline"}
+                    />
+                    <div className="avatar">{f.displayName.charAt(0).toUpperCase()}</div>
+                    <span className="friends-rail-name" title={f.displayName}>
+                      {f.displayName}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+          </aside>
+        </div>
+      ) : null}
+
       {friendsOpen ? (
         <div className="friends-overlay" onClick={() => setFriendsOpen(false)}>
           <div className="friends-panel" onClick={(event) => event.stopPropagation()}>
@@ -1297,22 +1975,41 @@ export default function HomePage({
                 ×
               </button>
             </div>
-            <input
-              className="friends-search"
-              type="text"
-              placeholder="Search friends..."
-              value={friendsQuery}
-              onChange={(event) => setFriendsQuery(event.target.value)}
-            />
-            <div className="grid" style={{ padding: 0 }}>
+            <div className="friends-search-row">
+              <input
+                className="friends-search"
+                type="text"
+                placeholder="Name, user #, or account ID…"
+                value={friendsQuery}
+                onChange={(event) => setFriendsQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    runFriendsSearch();
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="friends-search-btn"
+                disabled={!accessToken || !friendsQuery.trim()}
+                onClick={() => runFriendsSearch()}
+              >
+                Search
+              </button>
+            </div>
+            <div className="friends-results">
               {friendResults.map((friend) => (
                   <div className="friend-card" key={friend.id}>
                     <div className="friend-meta">
                       <div className="avatar">{friend.displayName.charAt(0).toUpperCase()}</div>
-                      <div>
+                      <div className="friend-meta-text">
                         <p className="friend-name">{friend.displayName}</p>
                         <p className="friend-source">How you know them: {friend.source}</p>
-                        <p className="friend-source">ID: {friend.id}</p>
+                        <p className="friend-source">
+                          {friend.numericId != null ? `User #${friend.numericId} · ` : null}
+                          Account ID: {friend.id}
+                        </p>
                       </div>
                     </div>
                     <button

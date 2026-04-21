@@ -18,8 +18,8 @@ import type { MovieCatalogEntry } from '@prisma/client';
 import type { TmdbSearchResult, TmdbMovieDetails } from '../utils/tmdb-client.js';
 import type { CreateCatalogMovieBody, MarkWatchedBody } from '../dtos/movie-dtos.js';
 import * as movieCatalogRepository from '../repositories/movie-catalog-repository.js';
+import * as watchedRepository from '../repositories/watched-repository.js';
 import * as tmdbClient from '../utils/tmdb-client.js';
-
 export interface WatchlistEntry {
   id: string;
   tmdbId: number;
@@ -492,10 +492,10 @@ export function getWatchlist(userId: string): Promise<WatchlistEntry[]> {
   return Promise.resolve([]); // TODO
 }
 
-export function markWatched(userId: string, dto: MarkWatchedBody): Promise<void> {
-  return Promise.resolve(); // TODO
+export async function markWatched(userId: string, dto: MarkWatchedBody): Promise<void> {
+  await watchedRepository.upsertRating(userId, dto.tmdbId, dto.rating);
 }
 
-export function getRatings(userId: string): Promise<Rating[]> {
-  return Promise.resolve([]); // TODO
+export async function getRatings(userId: string): Promise<Rating[]> {
+  return watchedRepository.listRatingsByUser(userId);
 }

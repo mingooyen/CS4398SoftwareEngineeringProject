@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 export const updateProfileBodySchema = z.object({
   displayName: z.string().min(1).optional(),
-  preferences: z.object({ favoriteGenres: z.array(z.string()) }).optional(),
+  preferences: z
+    .object({
+      favoriteGenres: z.array(z.string()).optional(),
+      forYouExcludedGenres: z.array(z.string()).optional(),
+    })
+    .optional(),
 });
 
 export const preferencesQuerySchema = z.object({});

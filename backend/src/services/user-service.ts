@@ -1,6 +1,7 @@
 import type { User } from '@prisma/client';
 import type { UpdateProfileBody } from '../dtos/user-dtos.js';
 import { getPrisma } from '../config/database.js';
+import { isUserOnline, touchPresence } from './presence-store.js';
 import * as friendshipRepository from '../repositories/friendship-repository.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../types/errors.js';
 
@@ -13,10 +14,12 @@ function toNumberOrNull(v: unknown): number | null {
 
 export interface UserPreferences {
   favoriteGenres?: string[];
+  forYouExcludedGenres?: string[];
 }
 
 export interface FriendSearchResult {
   id: string;
+  numericId: number | null;
   displayName: string;
 }
 
@@ -31,6 +34,7 @@ export interface FriendView {
   userId: string;
   numericId: number | null;
   displayName: string;
+  isOnline: boolean;
 }
 
 export function getById(id: string): Promise<User | null> {
@@ -50,13 +54,33 @@ export async function updateProfile(
     },
   });
 
-  if (dto.preferences?.favoriteGenres) {
+  if (
+    dto.preferences &&
+    (dto.preferences.favoriteGenres !== undefined ||
+      dto.preferences.forYouExcludedGenres !== undefined)
+  ) {
+    const existing = await prisma.userPreferences.findUnique({ where: { userId } });
+    const nextFav =
+      dto.preferences.favoriteGenres !== undefined
+        ? dto.preferences.favoriteGenres
+        : (existing?.favoriteGenres ?? []);
+    const nextExcl =
+      dto.preferences.forYouExcludedGenres !== undefined
+        ? dto.preferences.forYouExcludedGenres
+        : (existing?.forYouExcludedGenres ?? []);
+
     await prisma.userPreferences.upsert({
       where: { userId },
-      update: { favoriteGenres: dto.preferences.favoriteGenres },
+      update: {
+        ...(dto.preferences.favoriteGenres !== undefined ? { favoriteGenres: nextFav } : {}),
+        ...(dto.preferences.forYouExcludedGenres !== undefined
+          ? { forYouExcludedGenres: nextExcl }
+          : {}),
+      },
       create: {
         userId,
-        favoriteGenres: dto.preferences.favoriteGenres,
+        favoriteGenres: dto.preferences.favoriteGenres ?? [],
+        forYouExcludedGenres: dto.preferences.forYouExcludedGenres ?? [],
       },
     });
   }
@@ -67,17 +91,33 @@ export async function updateProfile(
 export async function getPreferences(userId: string): Promise<UserPreferences> {
   const prefs = await getPrisma().userPreferences.findUnique({
     where: { userId },
-    select: { favoriteGenres: true },
+    select: { favoriteGenres: true, forYouExcludedGenres: true },
   });
 
   return {
     favoriteGenres: prefs?.favoriteGenres ?? [],
+    forYouExcludedGenres: prefs?.forYouExcludedGenres ?? [],
   };
 }
 
+const INT32_MAX = 2147483647;
+
+/** 1–10 digit positive ids that fit `User.numericId` (Prisma Int). Rejects leading zeros except "0" is not used (min 1). */
+function parseNumericUserId(q: string): number | null {
+  if (!/^\d+$/.test(q) || q.length > 10) return null;
+  const n = Number(q);
+  if (!Number.isSafeInteger(n) || n < 1 || n > INT32_MAX) return null;
+  if (String(n) !== q) return null;
+  return n;
+}
+
+/** Mongo ObjectId string form (24 hex chars). */
+function isMongoObjectIdString(s: string): boolean {
+  return /^[0-9a-f]{24}$/i.test(s);
+}
+
 /**
- * Search users by partial displayName or partial id.
- * Returns all matching names, and includes id so duplicate names can be distinguished in UI.
+ * Search users by partial displayName, numeric user id (`numericId`), or exact account id (`User.id` / ObjectId string).
  */
 export async function searchUsers(
   query: string,
@@ -87,14 +127,18 @@ export async function searchUsers(
   const q = query.trim();
   if (!q) return [];
 
-  const maybeNumeric = /^\d+$/.test(q) ? Number(q) : null;
+  const numericId = parseNumericUserId(q);
+  const objectIdCandidates = isMongoObjectIdString(q)
+    ? Array.from(new Set([q, q.toLowerCase()]))
+    : [];
 
   const users = await getPrisma().user.findMany({
     where: {
       id: { not: actorId },
       OR: [
         { displayName: { contains: q, mode: 'insensitive' } },
-        ...(maybeNumeric ? [{ numericId: maybeNumeric }] : []),
+        ...(numericId != null ? [{ numericId }] : []),
+        ...objectIdCandidates.map((id) => ({ id })),
       ],
     },
     take: limit,
@@ -106,8 +150,11 @@ export async function searchUsers(
     },
   });
 
-  return users
-    .map((u) => ({ id: u.id, displayName: u.displayName }));
+  return users.map((u) => ({
+    id: u.id,
+    numericId: toNumberOrNull(u.numericId),
+    displayName: u.displayName,
+  }));
 }
 
 export async function listIncomingFriendRequests(userId: string): Promise<FriendRequestView[]> {
@@ -128,8 +175,13 @@ export async function listFriends(userId: string): Promise<FriendView[]> {
       userId: friend.id,
       numericId: toNumberOrNull(friend.numericId),
       displayName: friend.displayName,
+      isOnline: isUserOnline(friend.id),
     };
   });
+}
+
+export function recordMyPresence(userId: string): void {
+  touchPresence(userId);
 }
 
 export async function sendFriendRequest(userId: string, targetUserId: string): Promise<void> {

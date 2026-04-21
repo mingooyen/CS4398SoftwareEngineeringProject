@@ -33,5 +33,6 @@ router.patch(
   asyncHandler(userController.updateMe)
 );
 router.get('/me/preferences', asyncHandler(userController.getMyPreferences));
+router.post('/me/presence', asyncHandler(userController.postMyPresence));
 
 export default router;
