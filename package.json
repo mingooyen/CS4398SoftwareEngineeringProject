@@ -1,4 +1,10 @@
 {
+  "scripts": {
+    "test:frontend": "npm --prefix frontend test",
+    "test:backend": "npm --prefix backend test",
+    "test:db": "npm --prefix backend run db:validate",
+    "test:all": "npm run test:frontend && npm run test:backend && npm run test:db"
+  },
   "dependencies": {
     "@prisma/client": "^6.19.2",
     "mongodb": "^7.1.1"

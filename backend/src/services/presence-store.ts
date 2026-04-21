@@ -7,9 +7,15 @@ const ONLINE_WINDOW_MS = 90_000;
 const dataDir = path.join(process.cwd(), 'data');
 const presenceFile = path.join(dataDir, 'presence.json');
 
-type PresenceFile = Record<string, number>;
+export type ActivityStatus = 'active' | 'away' | 'busy' | 'invisible';
 
-let lastSeenByUserId: PresenceFile = {};
+type PresencePayload = {
+  lastSeenByUserId: Record<string, number>;
+  activityStatusByUserId: Record<string, ActivityStatus>;
+};
+
+let lastSeenByUserId: Record<string, number> = {};
+let activityStatusByUserId: Record<string, ActivityStatus> = {};
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleSave(): void {
@@ -18,7 +24,11 @@ function scheduleSave(): void {
     saveTimer = null;
     try {
       fs.mkdirSync(dataDir, { recursive: true });
-      fs.writeFileSync(presenceFile, JSON.stringify(lastSeenByUserId), 'utf8');
+      fs.writeFileSync(
+        presenceFile,
+        JSON.stringify({ lastSeenByUserId, activityStatusByUserId } satisfies PresencePayload),
+        'utf8'
+      );
     } catch (err) {
       console.error('[presence] failed to write', presenceFile, err);
     }
@@ -29,11 +39,21 @@ export function initPresenceStore(): void {
   try {
     const raw = fs.readFileSync(presenceFile, 'utf8');
     const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && 'lastSeenByUserId' in parsed) {
+      const payload = parsed as PresencePayload;
+      lastSeenByUserId = payload.lastSeenByUserId ?? {};
+      activityStatusByUserId = payload.activityStatusByUserId ?? {};
+      return;
+    }
     if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      lastSeenByUserId = parsed as PresenceFile;
+      // Backward compatibility with older file format.
+      lastSeenByUserId = parsed as Record<string, number>;
+      activityStatusByUserId = {};
+      return;
     }
   } catch {
     lastSeenByUserId = {};
+    activityStatusByUserId = {};
   }
 }
 
@@ -44,7 +64,20 @@ export function touchPresence(userId: string): void {
 }
 
 export function isUserOnline(userId: string): boolean {
+  if (getActivityStatus(userId) === 'invisible') return false;
   const t = lastSeenByUserId[userId];
   if (typeof t !== 'number' || !Number.isFinite(t)) return false;
   return Date.now() - t < ONLINE_WINDOW_MS;
+}
+
+export function setActivityStatus(userId: string, status: ActivityStatus): void {
+  if (!userId) return;
+  activityStatusByUserId[userId] = status;
+  scheduleSave();
+}
+
+export function getActivityStatus(userId: string): ActivityStatus {
+  const value = activityStatusByUserId[userId];
+  if (value === 'away' || value === 'busy' || value === 'invisible') return value;
+  return 'active';
 }
