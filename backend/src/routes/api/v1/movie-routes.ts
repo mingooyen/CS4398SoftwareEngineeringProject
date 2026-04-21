@@ -34,8 +34,12 @@ router.get('/search', validateQuery(searchQuerySchema), asyncHandler(movieContro
 router.get('/watchlist', movieController.getWatchlist);
 router.post('/watchlist', validateBody(watchlistBodySchema), movieController.addToWatchlist);
 router.delete('/watchlist/:tmdbId', movieController.removeFromWatchlist);
-router.post('/watched', validateBody(markWatchedBodySchema), movieController.markWatched);
-router.get('/ratings', movieController.getMyRatings);
+router.post(
+  '/watched',
+  validateBody(markWatchedBodySchema),
+  asyncHandler(movieController.markWatched)
+);
+router.get('/ratings', asyncHandler(movieController.getMyRatings));
 router.get('/:tmdbId', movieController.getMovieByTmdbId);
 
 export default router;

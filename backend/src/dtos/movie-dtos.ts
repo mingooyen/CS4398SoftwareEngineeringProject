@@ -46,7 +46,7 @@ export const watchlistBodySchema = z.object({
 
 export const markWatchedBodySchema = z.object({
   tmdbId: z.number().int().positive(),
-  rating: z.number().min(0).max(10).optional(),
+  rating: z.number().int().min(1).max(5),
 });
 
 export type SearchQuery = z.infer<typeof searchQuerySchema>;

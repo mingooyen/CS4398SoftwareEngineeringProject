@@ -212,6 +212,25 @@ export function denyJoinRequest(requestId) {
   );
 }
 
+/**
+ * Remove the current user from a group. Creators cannot leave this way (delete the group instead).
+ */
+export function leaveGroup(groupId, userName) {
+  const groups = readGroups();
+  const group = groups.find((g) => g.id === groupId);
+  if (!group) return { status: "not-found" };
+  const mine = normalizeName(userName);
+  const self = (group.members || []).find((m) => normalizeName(m.name) === mine);
+  if (!self) return { status: "not-member" };
+  if (self.role === "creator") return { status: "creator-cannot-leave" };
+  const nextMembers = (group.members || []).filter((m) => normalizeName(m.name) !== mine);
+  const nextGroups = groups.map((g) =>
+    g.id === groupId ? { ...g, members: nextMembers } : g
+  );
+  writeGroups(nextGroups);
+  return { status: "left" };
+}
+
 export function readInvites() {
   return readLocalList(GROUP_INVITES_STORAGE_KEY, []);
 }

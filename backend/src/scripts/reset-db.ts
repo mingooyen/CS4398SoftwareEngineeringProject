@@ -59,6 +59,7 @@ async function main(): Promise<void> {
       data: {
         userId: user.id,
         favoriteGenres: seed.favoriteGenres,
+        forYouExcludedGenres: [],
       },
     });
   }
