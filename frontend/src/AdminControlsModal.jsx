@@ -17,6 +17,8 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
   const [movieYear, setMovieYear] = useState(String(new Date().getFullYear()));
   const [movieGenre, setMovieGenre] = useState("");
   const [moviePosterKey, setMoviePosterKey] = useState("");
+  const [moviePosterUploadDataUrl, setMoviePosterUploadDataUrl] = useState("");
+  const [moviePosterUploadName, setMoviePosterUploadName] = useState("");
   const [movieNotes, setMovieNotes] = useState("");
   const [catalogMsg, setCatalogMsg] = useState("");
   const [actionMsg, setActionMsg] = useState("");
@@ -79,6 +81,7 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
       title: movieTitle.trim(),
       releaseYear: Number(movieYear) || undefined,
       genre: movieGenre.trim() || undefined,
+      customPosterUrl: moviePosterUploadDataUrl || undefined,
       posterStorageKey: moviePosterKey.trim() || undefined,
       adminNotes: movieNotes.trim() || undefined,
       source: "CUSTOM_ADMIN",
@@ -102,6 +105,8 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
         setMovieTitle("");
         setMovieGenre("");
         setMoviePosterKey("");
+        setMoviePosterUploadDataUrl("");
+        setMoviePosterUploadName("");
         setMovieNotes("");
         notifyParent();
         return;
@@ -114,6 +119,7 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
       title: body.title,
       year: body.releaseYear,
       genre: body.genre || "General",
+      posterUrl: body.customPosterUrl || "",
       posterStorageKey: body.posterStorageKey || "",
       adminNotes: body.adminNotes || "",
     });
@@ -121,8 +127,41 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
     setMovieTitle("");
     setMovieGenre("");
     setMoviePosterKey("");
+    setMoviePosterUploadDataUrl("");
+    setMoviePosterUploadName("");
     setMovieNotes("");
     notifyParent();
+  };
+
+  const handlePosterFileChange = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      setCatalogMsg("Please choose an image file.");
+      event.target.value = "";
+      return;
+    }
+    const maxBytes = 4 * 1024 * 1024;
+    if (file.size > maxBytes) {
+      setCatalogMsg("Image is too large. Please use an image under 4MB.");
+      event.target.value = "";
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = typeof reader.result === "string" ? reader.result : "";
+      if (!dataUrl) {
+        setCatalogMsg("Could not read image. Try another file.");
+        return;
+      }
+      setMoviePosterUploadDataUrl(dataUrl);
+      setMoviePosterUploadName(file.name);
+      setCatalogMsg("");
+    };
+    reader.onerror = () => {
+      setCatalogMsg("Could not read image. Try another file.");
+    };
+    reader.readAsDataURL(file);
   };
 
   const localCatalog = readAdminCatalogMovies();
@@ -243,6 +282,14 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
         .admin-modal-btn:hover {
           border-color: #e8c547;
           color: #f0ece4;
+        }
+        .admin-upload-preview {
+          width: 92px;
+          height: 138px;
+          border-radius: 8px;
+          border: 1px solid #343434;
+          object-fit: cover;
+          background: #171717;
         }
         .admin-modal-btn-danger {
           border-color: #6a2e2e;
@@ -396,6 +443,39 @@ export default function AdminControlsModal({ open, onClose, session, accessToken
               style={{ flex: "1 1 100%" }}
             />
           </div>
+          <div className="admin-modal-row">
+            <input
+              className="admin-modal-input"
+              type="file"
+              accept="image/*"
+              onChange={handlePosterFileChange}
+              style={{ flex: "1 1 100%" }}
+            />
+          </div>
+          {moviePosterUploadDataUrl ? (
+            <div className="admin-modal-row" style={{ alignItems: "flex-start" }}>
+              <img
+                src={moviePosterUploadDataUrl}
+                alt="Poster upload preview"
+                className="admin-upload-preview"
+              />
+              <div>
+                <p className="admin-modal-p" style={{ marginBottom: "4px" }}>
+                  Selected upload: <strong>{moviePosterUploadName || "image"}</strong>
+                </p>
+                <button
+                  type="button"
+                  className="admin-modal-btn"
+                  onClick={() => {
+                    setMoviePosterUploadDataUrl("");
+                    setMoviePosterUploadName("");
+                  }}
+                >
+                  Remove upload
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="admin-modal-row">
             <input
               className="admin-modal-input"

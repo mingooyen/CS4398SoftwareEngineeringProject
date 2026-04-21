@@ -1,3 +1,206 @@
+# Movie Night Planner - Architecture (Current Implementation)
+
+This document reflects what is currently implemented in the repository.
+
+## 1) System Overview
+
+- Frontend: React + Vite app in `frontend/`
+- Backend: Express + TypeScript API in `backend/`
+- Database: Prisma schema in `database/schema.prisma`
+- Auth model: token-based auth with route-level protection
+
+Backend uses a layered flow:
+
+`routes -> controllers -> services -> repositories -> database/external APIs`
+
+Validation and access control are applied in middleware.
+
+## 2) Repository Structure
+
+```text
+movie-night-planner/
+|- frontend/
+|  |- src/
+|  |- dist/
+|  `- package.json
+|- backend/
+|  |- src/
+|  |  |- app.ts
+|  |  |- index.ts
+|  |  |- config/
+|  |  |- controllers/
+|  |  |- dtos/
+|  |  |- middleware/
+|  |  |- repositories/
+|  |  |- routes/api/v1/
+|  |  |- services/
+|  |  `- utils/
+|  |- dist/
+|  `- package.json
+|- database/
+|  `- schema.prisma
+|- docs/
+|  `- ARCHITECTURE.md
+`- README.md
+```
+
+## 3) Backend Architecture
+
+### 3.1 App Initialization
+
+`backend/src/app.ts`:
+
+- Creates Express app
+- Configures CORS allowlist from `CORS_ORIGINS` (or local defaults)
+- Enables JSON middleware
+- Registers v1 routes
+- Applies centralized error handler
+
+### 3.2 Route Registration
+
+`backend/src/routes/api/v1/index.ts` mounts:
+
+- `/api/v1/auth`
+- `/api/v1/users`
+- `/api/v1/movies`
+- `/api/v1/groups`
+
+### 3.3 Middleware Responsibilities
+
+- `auth.ts`: `authenticate`, `requireAuth`
+- `rbac.ts`: `requireGroupAdmin`, `requireSystemAdmin`
+- `group-access.ts`: `loadGroupOnly`, `requireGroupParticipant`
+- `validate.ts`: request body/query validation
+- `async-handler.ts`: async controller wrapper helpers
+- `error-handler.ts`: consistent API error responses
+
+### 3.4 Layered Responsibilities
+
+- Routes: define endpoint + middleware chains
+- Controllers: HTTP input/output mapping
+- Services: business rules and orchestration
+- Repositories: persistence operations
+- DTOs: schema validation definitions
+
+## 4) Frontend Architecture (Current)
+
+Current frontend is component/page-driven in `frontend/src`:
+
+- Root app flow: `App.jsx`
+- Main pages: `HomePage.jsx`, `GroupPage.jsx`, `GroupDetailPage.jsx`, `AuthPage.jsx`
+- Session/auth helpers: `authService.js`
+- Group data access: `groupDataStore.js`
+- Admin features: `AdminControlsModal.jsx`, `adminDataStore.js`
+- Recommendation/movie helpers: `recommendationUtils.js`, `posterUtils.js`, `offlineCatalog.js`
+
+## 5) API Surface (Implemented)
+
+Base path: `/api/v1`
+
+## 5.1 Auth Routes
+
+From `auth-routes.ts`:
+
+- `POST /auth/register`
+- `POST /auth/login`
+- `POST /auth/refresh`
+- `POST /auth/logout`
+
+## 5.2 User Routes (Authenticated)
+
+From `user-routes.ts`:
+
+- `GET /users/search`
+- `GET /users/friends`
+- `GET /users/friend-requests`
+- `POST /users/friend-requests`
+- `POST /users/friend-requests/:requestId/accept`
+- `POST /users/friend-requests/:requestId/deny`
+- `GET /users/me`
+- `PATCH /users/me`
+- `GET /users/me/preferences`
+- `POST /users/me/presence`
+
+## 5.3 Movie Routes
+
+Public:
+
+- `GET /movies/discover`
+- `GET /movies/genres`
+
+Authenticated:
+
+- `GET /movies/catalog`
+- `POST /movies/catalog` (system admin)
+- `GET /movies/search`
+- `GET /movies/watchlist`
+- `POST /movies/watchlist`
+- `DELETE /movies/watchlist/:tmdbId`
+- `POST /movies/watched`
+- `GET /movies/ratings`
+- `GET /movies/:tmdbId`
+
+## 5.4 Group Routes
+
+From `group-routes.ts`:
+
+Top-level:
+
+- `GET /groups`
+- `POST /groups`
+- `POST /groups/:groupId/join`
+
+Group-scoped (participant/system admin required):
+
+- `GET /groups/:groupId`
+- `PATCH /groups/:groupId` (group admin)
+- `DELETE /groups/:groupId` (group admin)
+- `POST /groups/:groupId/leave`
+- `GET /groups/:groupId/members`
+- `GET /groups/:groupId/invite-candidates`
+- `POST /groups/:groupId/invites` (group admin)
+- `POST /groups/:groupId/members/:userId/remove` (group admin)
+- `GET /groups/:groupId/recommendations`
+
+Nested session routes:
+
+- `GET /groups/:groupId/sessions`
+- `POST /groups/:groupId/sessions`
+- `GET /groups/:groupId/sessions/:sessionId`
+- `PATCH /groups/:groupId/sessions/:sessionId`
+- `DELETE /groups/:groupId/sessions/:sessionId`
+
+Nested vote routes:
+
+- `GET /groups/:groupId/sessions/:sessionId/votes`
+- `POST /groups/:groupId/sessions/:sessionId/votes`
+- `PATCH /groups/:groupId/sessions/:sessionId/votes/me`
+
+## 6) Data and Integrations
+
+- Prisma ORM is used for database access (`@prisma/client`).
+- Schema source of truth: `database/schema.prisma`.
+- Movie/recommendation functionality integrates with internal service modules and external providers configured through environment variables.
+
+## 7) Development Workflow
+
+Backend:
+
+- Dev server: `npm run dev`
+- Build: `npm run build`
+- Start build: `npm run start`
+- Prisma tools: `npm run db:generate`, `npm run db:migrate`, `npm run db:push`, `npm run db:studio`
+
+Frontend:
+
+- Dev server: `npm run dev`
+- Build: `npm run build`
+- Preview build: `npm run preview`
+
+## 8) Notes
+
+- This file documents implemented architecture, not a future-state skeleton.
+- If code and docs differ, backend route files under `backend/src/routes/api/v1/` are the API source of truth.
 # Collaborative Movie Night Planner — Architecture & Skeleton
 
 ---

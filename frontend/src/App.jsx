@@ -127,6 +127,7 @@ function App() {
         ) : null}
         <GroupPage
           highlightedName={highlightedName}
+          accessToken={session?.accessToken ?? ""}
           groupTabConfig={groupTabConfig}
           isSystemAdmin={isSystemAdmin}
           onOpenAdmin={() => setAdminModalOpen(true)}
@@ -172,6 +173,7 @@ function App() {
         <GroupDetailPage
           groupId={groupDetailId}
           highlightedName={highlightedName}
+          accessToken={session?.accessToken ?? ""}
           isSystemAdmin={isSystemAdmin}
           onOpenAdmin={() => setAdminModalOpen(true)}
           onBack={() => setPage("group")}

@@ -1,11 +1,14 @@
 import { z } from 'zod';
 
+const activityStatusSchema = z.enum(['active', 'away', 'busy', 'invisible']);
+
 export const updateProfileBodySchema = z.object({
   displayName: z.string().min(1).optional(),
   preferences: z
     .object({
       favoriteGenres: z.array(z.string()).optional(),
       forYouExcludedGenres: z.array(z.string()).optional(),
+      activityStatus: activityStatusSchema.optional(),
     })
     .optional(),
 });

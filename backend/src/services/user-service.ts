@@ -1,7 +1,12 @@
 import type { User } from '@prisma/client';
 import type { UpdateProfileBody } from '../dtos/user-dtos.js';
 import { getPrisma } from '../config/database.js';
-import { isUserOnline, touchPresence } from './presence-store.js';
+import {
+  getActivityStatus,
+  isUserOnline,
+  setActivityStatus,
+  touchPresence,
+} from './presence-store.js';
 import * as friendshipRepository from '../repositories/friendship-repository.js';
 import { NotFoundError, ValidationError, ForbiddenError } from '../types/errors.js';
 
@@ -15,6 +20,7 @@ function toNumberOrNull(v: unknown): number | null {
 export interface UserPreferences {
   favoriteGenres?: string[];
   forYouExcludedGenres?: string[];
+  activityStatus?: 'active' | 'away' | 'busy' | 'invisible';
 }
 
 export interface FriendSearchResult {
@@ -35,6 +41,7 @@ export interface FriendView {
   numericId: number | null;
   displayName: string;
   isOnline: boolean;
+  activityStatus: 'active' | 'away' | 'busy' | 'invisible';
 }
 
 export function getById(id: string): Promise<User | null> {
@@ -57,7 +64,8 @@ export async function updateProfile(
   if (
     dto.preferences &&
     (dto.preferences.favoriteGenres !== undefined ||
-      dto.preferences.forYouExcludedGenres !== undefined)
+      dto.preferences.forYouExcludedGenres !== undefined ||
+      dto.preferences.activityStatus !== undefined)
   ) {
     const existing = await prisma.userPreferences.findUnique({ where: { userId } });
     const nextFav =
@@ -84,6 +92,9 @@ export async function updateProfile(
       },
     });
   }
+  if (dto.preferences?.activityStatus !== undefined) {
+    setActivityStatus(userId, dto.preferences.activityStatus);
+  }
 
   return updatedUser;
 }
@@ -97,6 +108,7 @@ export async function getPreferences(userId: string): Promise<UserPreferences> {
   return {
     favoriteGenres: prefs?.favoriteGenres ?? [],
     forYouExcludedGenres: prefs?.forYouExcludedGenres ?? [],
+    activityStatus: getActivityStatus(userId),
   };
 }
 
@@ -176,6 +188,7 @@ export async function listFriends(userId: string): Promise<FriendView[]> {
       numericId: toNumberOrNull(friend.numericId),
       displayName: friend.displayName,
       isOnline: isUserOnline(friend.id),
+      activityStatus: getActivityStatus(friend.id),
     };
   });
 }

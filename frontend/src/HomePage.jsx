@@ -35,6 +35,30 @@ const HOME_BROWSE_PRESETS = [
   { id: "mostvotes", label: "Most reviewed", title: "Titles with the largest number of TMDB user votes." },
 ];
 
+const ACTIVITY_STATUS_KEY = "mnp.ui.activityStatus";
+const ACTIVITY_STATUS_OPTIONS = [
+  { value: "active", label: "Active" },
+  { value: "away", label: "Away" },
+  { value: "busy", label: "Busy" },
+  { value: "invisible", label: "Invisible" },
+];
+
+function normalizeActivityStatus(value = "") {
+  const next = String(value || "").toLowerCase();
+  if (ACTIVITY_STATUS_OPTIONS.some((opt) => opt.value === next)) return next;
+  return "active";
+}
+
+function readInitialActivityStatus() {
+  try {
+    const stored = String(localStorage.getItem(ACTIVITY_STATUS_KEY) || "");
+    return normalizeActivityStatus(stored);
+  } catch {
+    // no-op: fall back to default
+  }
+  return "active";
+}
+
 function StarRating({ movieId, initialRating, onRate }) {
   const [hovered, setHovered] = useState(0);
   const [selected, setSelected] = useState(initialRating || 0);
@@ -163,6 +187,7 @@ export default function HomePage({
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [friendsRailOpen, setFriendsRailOpen] = useState(false);
+  const [myActivityStatus, setMyActivityStatus] = useState(readInitialActivityStatus);
   const [friendsQuery, setFriendsQuery] = useState("");
   const [friendResults, setFriendResults] = useState([]);
   const friendsSearchAbortRef = useRef(null);
@@ -206,6 +231,7 @@ export default function HomePage({
       userId: String(f.userId || ""),
       displayName: f.displayName,
       isOnline: Boolean(f.isOnline),
+      activityStatus: normalizeActivityStatus(f.activityStatus),
     }));
     const apiNames = new Set(fromApi.map((f) => normalizeName(f.displayName)));
     const fromLocal = self
@@ -216,6 +242,7 @@ export default function HomePage({
               userId: String(l.friendId || ""),
               displayName: l.friendName,
               isOnline: false,
+              activityStatus: "active",
             }))
         : [];
     return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
@@ -235,6 +262,8 @@ export default function HomePage({
         "Logout",
       ]
     : ["Home", "My Groups", "Login", "Signup"];
+  const showFriendsRail =
+    isAuthenticated && homeNav !== "Logout" && homeNav !== "Signup";
 
   const sourceMovies =
     homeNav === "Watchlist"
@@ -408,7 +437,16 @@ export default function HomePage({
   }, [isAuthenticated, accessToken, friendRequests, friendsRailOpen]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem(ACTIVITY_STATUS_KEY, myActivityStatus);
+    } catch {
+      // ignore localStorage failures
+    }
+  }, [myActivityStatus]);
+
+  useEffect(() => {
     if (!isAuthenticated || !accessToken) return;
+    if (myActivityStatus === "invisible") return;
     const ping = () => {
       fetch("http://localhost:3000/api/v1/users/me/presence", {
         method: "POST",
@@ -418,7 +456,7 @@ export default function HomePage({
     ping();
     const id = setInterval(ping, 25000);
     return () => clearInterval(id);
-  }, [isAuthenticated, accessToken]);
+  }, [isAuthenticated, accessToken, myActivityStatus]);
 
   useEffect(() => {
     if (!isAuthenticated && homeNav === "Watchlist") {
@@ -510,12 +548,15 @@ export default function HomePage({
       .then((payload) => {
         const g = payload?.preferences?.favoriteGenres;
         const x = payload?.preferences?.forYouExcludedGenres;
+        const activity = normalizeActivityStatus(payload?.preferences?.activityStatus);
         setSavedFavoriteGenres(Array.isArray(g) ? g.filter(Boolean) : []);
         setSavedExcludedGenres(Array.isArray(x) ? x.filter(Boolean) : []);
+        setMyActivityStatus(activity);
       })
       .catch(() => {
         setSavedFavoriteGenres([]);
         setSavedExcludedGenres([]);
+        setMyActivityStatus("active");
       });
   }, [isAuthenticated, accessToken]);
 
@@ -602,6 +643,43 @@ export default function HomePage({
     [accessToken]
   );
 
+  const addForYouGenreFromTag = useCallback(
+    async (name) => {
+      const cleanName = String(name || "").trim();
+      if (!cleanName || !accessToken) return;
+      const key = cleanName.toLowerCase();
+      const prevFav = savedFavRef.current;
+      const prevExcl = savedExclRef.current;
+      const nextFav = prevFav.some((g) => g.toLowerCase() === key) ? [...prevFav] : [...prevFav, cleanName];
+      const nextExcl = prevExcl.filter((g) => g.toLowerCase() !== key);
+      const changed =
+        nextFav.length !== prevFav.length || nextExcl.length !== prevExcl.length;
+      if (!changed) return;
+      setSavedFavoriteGenres(nextFav);
+      setSavedExcludedGenres(nextExcl);
+      try {
+        const res = await fetch("http://localhost:3000/api/v1/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            preferences: { favoriteGenres: nextFav, forYouExcludedGenres: nextExcl },
+          }),
+        });
+        if (!res.ok) {
+          setSavedFavoriteGenres(prevFav);
+          setSavedExcludedGenres(prevExcl);
+        }
+      } catch {
+        setSavedFavoriteGenres(prevFav);
+        setSavedExcludedGenres(prevExcl);
+      }
+    },
+    [accessToken]
+  );
+
   useEffect(() => {
     setHomeVisibleCount(HOME_PAGE_CHUNK);
   }, [homeNav, browsePreset, selectedGenreName, highlightedName, query]);
@@ -613,18 +691,18 @@ export default function HomePage({
     let browseNames = [];
     let sortBy = null;
     if (homeNav === "Home") {
-      if (selectedGenreName) {
-        browseNames = [selectedGenreName];
-      } else if (browsePreset === "foryou") {
+      if (browsePreset === "foryou") {
         browseNames = mergeForYouGenreNames((id) => movieGenresByIdRef.current[id]);
         if (!browseNames.length) sortBy = "popularity.desc";
       } else {
-        browseNames = [];
         if (browsePreset === "trending") sortBy = "popularity.desc";
         else if (browsePreset === "popular") sortBy = "vote_average.desc";
         else if (browsePreset === "newest") sortBy = "release_date.desc";
         else if (browsePreset === "boxoffice") sortBy = "revenue.desc";
         else if (browsePreset === "mostvotes") sortBy = "vote_count.desc";
+      }
+      if (selectedGenreName) {
+        browseNames = [selectedGenreName];
       }
     }
 
@@ -1080,6 +1158,32 @@ export default function HomePage({
           padding: 3px 8px;
           border-radius: 999px;
         }
+        .friends-activity-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          padding: 10px 12px 12px;
+          border-bottom: 1px solid #232323;
+        }
+        .friends-activity-label {
+          font-size: 11px;
+          color: #8b8b8b;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          flex-shrink: 0;
+        }
+        .friends-activity-select {
+          width: 100%;
+          max-width: 170px;
+          background: #171717;
+          border: 1px solid #2d2d2d;
+          color: #f0ece4;
+          border-radius: 8px;
+          padding: 7px 10px;
+          font-size: 12px;
+          font-family: inherit;
+        }
         .friends-rail-list {
           overflow-y: auto;
           padding: 12px;
@@ -1107,6 +1211,18 @@ export default function HomePage({
         .friends-rail-online.on {
           background: #2ecc71;
           box-shadow: 0 0 8px rgba(46, 204, 113, 0.45);
+        }
+        .friends-rail-online.away {
+          background: #f1c40f;
+          box-shadow: 0 0 8px rgba(241, 196, 15, 0.4);
+        }
+        .friends-rail-online.busy {
+          background: #e74c3c;
+          box-shadow: 0 0 8px rgba(231, 76, 60, 0.4);
+        }
+        .friends-rail-online.invisible {
+          background: #4a4a4a;
+          box-shadow: none;
         }
         .friends-rail-name {
           font-size: 14px;
@@ -1699,7 +1815,7 @@ export default function HomePage({
       </nav>
 
       <div
-        className={`home-page-body${isAuthenticated ? " has-friends-rail" : ""}${
+        className={`home-page-body${showFriendsRail ? " has-friends-rail" : ""}${
           friendsRailOpen ? " rail-open" : ""
         }`}
       >
@@ -1746,7 +1862,7 @@ export default function HomePage({
               <button
                 key={p.id}
                 type="button"
-                className={`now-filter-tab ${!selectedGenreName && browsePreset === p.id ? "active" : ""}`}
+                className={`now-filter-tab ${browsePreset === p.id ? "active" : ""}`}
                 title={p.title}
                 onClick={() => {
                   setBrowsePreset(p.id);
@@ -1757,7 +1873,7 @@ export default function HomePage({
               </button>
             ))}
           </div>
-          {homeNav === "Home" && !query.trim() && browsePreset === "foryou" && !selectedGenreName ? (
+          {homeNav === "Home" && !query.trim() && browsePreset === "foryou" ? (
             <div className="foryou-meta">
               {!isAuthenticated ? (
                 <p className="foryou-guest-hint">
@@ -1813,6 +1929,9 @@ export default function HomePage({
                     type="button"
                     className={`genre-pill ${selectedGenreName === g.name ? "active" : ""}`}
                     onClick={() => {
+                      if (browsePreset === "foryou") {
+                        addForYouGenreFromTag(g.name);
+                      }
                       setSelectedGenreName((prev) => (prev === g.name ? null : g.name));
                     }}
                   >
@@ -1867,7 +1986,7 @@ export default function HomePage({
       ) : null}
       </div>
 
-      {isAuthenticated ? (
+      {showFriendsRail ? (
         <div className={`friends-rail${friendsRailOpen ? " open" : ""}`} aria-label="My friends">
           <button
             type="button"
@@ -1900,7 +2019,9 @@ export default function HomePage({
               className={`friends-rail-handle-active-line${railOnlineCount > 0 ? " on" : ""}`}
               aria-hidden
             >
-              {railOnlineCount} active
+              {myActivityStatus === "invisible"
+                ? "Invisible"
+                : `${railOnlineCount} active`}
             </span>
             <span className="friends-rail-handle-chev" aria-hidden>
               {friendsRailOpen ? "◀" : "▶"}
@@ -1915,6 +2036,40 @@ export default function HomePage({
                 </span>
               </div>
               <span className="friends-rail-count">{railFriendsList.length}</span>
+            </div>
+            <div className="friends-activity-row">
+              <span className="friends-activity-label">Your status</span>
+              <select
+                className="friends-activity-select"
+                value={myActivityStatus}
+                onChange={(event) => {
+                  const nextStatus = normalizeActivityStatus(event.target.value);
+                  const prevStatus = myActivityStatus;
+                  setMyActivityStatus(nextStatus);
+                  if (!accessToken) return;
+                  fetch("http://localhost:3000/api/v1/users/me", {
+                    method: "PATCH",
+                    headers: {
+                      Authorization: `Bearer ${accessToken}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      preferences: { activityStatus: nextStatus },
+                    }),
+                  })
+                    .then((res) => {
+                      if (!res.ok) setMyActivityStatus(prevStatus);
+                    })
+                    .catch(() => setMyActivityStatus(prevStatus));
+                }}
+                aria-label="Set your activity status"
+              >
+                {ACTIVITY_STATUS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
             </div>
             <button
               type="button"
@@ -1950,9 +2105,27 @@ export default function HomePage({
                 railFriendsList.map((f) => (
                   <div key={`${f.userId}-${f.displayName}`} className="friends-rail-row">
                     <span
-                      className={`friends-rail-online${f.isOnline ? " on" : ""}`}
-                      title={f.isOnline ? "Online" : "Offline"}
-                      aria-label={f.isOnline ? "Online" : "Offline"}
+                      className={`friends-rail-online${
+                        f.isOnline ? (f.activityStatus === "away" ? " away" : f.activityStatus === "busy" ? " busy" : " on") : ""
+                      }${!f.isOnline || f.activityStatus === "invisible" ? " invisible" : ""}`}
+                      title={
+                        f.isOnline
+                          ? f.activityStatus === "away"
+                            ? "Away"
+                            : f.activityStatus === "busy"
+                              ? "Busy"
+                              : "Active"
+                          : "Offline"
+                      }
+                      aria-label={
+                        f.isOnline
+                          ? f.activityStatus === "away"
+                            ? "Away"
+                            : f.activityStatus === "busy"
+                              ? "Busy"
+                              : "Active"
+                          : "Offline"
+                      }
                     />
                     <div className="avatar">{f.displayName.charAt(0).toUpperCase()}</div>
                     <span className="friends-rail-name" title={f.displayName}>

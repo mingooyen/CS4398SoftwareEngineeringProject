@@ -32,6 +32,7 @@ enum GroupInviteStatus {
   EXPIRED
 }
 
+
 /// Global catalog movies are stored in `MovieCatalogEntry` (see model docs). SYSTEM_ADMIN may INSERT via API (POST /movies/catalog).
 model User {
   id           String         @id @default(auto()) @map("_id") @db.ObjectId

@@ -5,6 +5,7 @@ import {
   denyFriendRequest,
   leaveGroup,
   normalizeName,
+  readFriendLinks,
   readFriendRequests,
   readGroups,
   readInvites,
@@ -361,6 +362,7 @@ function UpcomingCard({ session }) {
 export default function GroupDetailPage({
   groupId = "",
   highlightedName = "",
+  accessToken = "",
   onBack,
   onNavigate,
   onLogout,
@@ -384,6 +386,8 @@ export default function GroupDetailPage({
   const [inviteName, setInviteName] = useState("");
   const [actionMsg, setActionMsg] = useState("");
   const [liveMovies, setLiveMovies] = useState([]);
+  const [friendsRailOpen, setFriendsRailOpen] = useState(false);
+  const [apiFriends, setApiFriends] = useState([]);
 
   useEffect(() => {
     setGroups(readGroups());
@@ -471,6 +475,32 @@ export default function GroupDetailPage({
     (req) => normalizeName(req.targetUserName) === normalizeName(currentUserName)
   );
   const navItems = ["Home", "My Groups", "Watchlist", ...(isSystemAdmin ? ["Admin"] : []), "Logout"];
+  const railFriendsList = useMemo(() => {
+    const self = normalizeName(currentUserName || "");
+    const fromApi = (apiFriends || []).map((f) => ({
+      userId: String(f.userId || ""),
+      displayName: f.displayName,
+      isOnline: Boolean(f.isOnline),
+      activityStatus: String(f.activityStatus || "active").toLowerCase(),
+    }));
+    const apiNames = new Set(fromApi.map((f) => normalizeName(f.displayName)));
+    const fromLocal = self
+      ? readFriendLinks()
+          .filter((l) => normalizeName(l.userName) === self)
+          .filter((l) => !apiNames.has(normalizeName(l.friendName || "")))
+          .map((l) => ({
+            userId: String(l.friendId || ""),
+            displayName: l.friendName,
+            isOnline: false,
+            activityStatus: "active",
+          }))
+      : [];
+    return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
+  }, [apiFriends, currentUserName]);
+  const railOnlineCount = useMemo(
+    () => railFriendsList.filter((f) => f.isOnline).length,
+    [railFriendsList]
+  );
 
   const movies = useMemo(
     () =>
@@ -660,6 +690,40 @@ export default function GroupDetailPage({
       .catch(() => setLiveMovies([]));
   }, [activeGroup]);
 
+  useEffect(() => {
+    if (!accessToken) {
+      setApiFriends([]);
+      return;
+    }
+    const loadFriends = () => {
+      fetch("http://localhost:3000/api/v1/users/friends", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (Array.isArray(payload?.friends)) setApiFriends(payload.friends);
+          else setApiFriends([]);
+        })
+        .catch(() => setApiFriends([]));
+    };
+    loadFriends();
+    const id = setInterval(loadFriends, 12000);
+    return () => clearInterval(id);
+  }, [accessToken, friendsRailOpen]);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    const ping = () => {
+      fetch("http://localhost:3000/api/v1/users/me/presence", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }).catch(() => {});
+    };
+    ping();
+    const id = setInterval(ping, 25000);
+    return () => clearInterval(id);
+  }, [accessToken]);
+
   if (!group) {
     return (
       <div style={{ padding: 24 }}>
@@ -697,6 +761,9 @@ export default function GroupDetailPage({
         .nav-link { background: none; border: none; cursor: pointer; font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 500; color: #888; padding: 8px 16px; border-radius: 6px; transition: color 0.2s, background 0.2s; letter-spacing: 0.5px; }
         .nav-link:hover { color: #f0ece4; background: #1a1a1a; }
         .nav-link.active { color: #e8c547; background: rgba(232,197,71,0.08); }
+        .group-detail-body { transition: padding-right 0.28s ease; }
+        .group-detail-body.has-friends-rail { padding-right: 50px; }
+        .group-detail-body.has-friends-rail.rail-open { padding-right: min(330px, calc(100vw - 24px)); }
         .page-header { padding: 48px 40px 0; display: flex; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; gap: 24px; }
         .group-meta { display: flex; flex-direction: column; gap: 8px; }
         .group-label { font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: #e8c547; font-weight: 500; }
@@ -866,6 +933,92 @@ export default function GroupDetailPage({
         .avatar { width: 34px; height: 34px; border-radius: 50%; background: #1e1e1e; border: 1px solid #2e2e2e; display: flex; align-items: center; justify-content: center; font-size: 13px; color: #888; }
         .avatar.creator { border-color: #e8c547; color: #e8c547; }
         .member-role { font-size: 11px; color: #8a8a8a; text-transform: uppercase; letter-spacing: 0.7px; }
+        .friends-rail {
+          position: fixed;
+          top: 64px;
+          right: 0;
+          bottom: 0;
+          z-index: 85;
+          display: flex;
+          flex-direction: row-reverse;
+          pointer-events: none;
+        }
+        .friends-rail > * { pointer-events: auto; }
+        .friends-rail-handle {
+          position: relative;
+          z-index: 2;
+          width: 50px;
+          flex-shrink: 0;
+          border: none;
+          border-left: 1px solid #2a2a2a;
+          background: linear-gradient(180deg, #1c1c1c 0%, #141414 100%);
+          color: #e8c547;
+          font-size: 11px;
+          font-weight: 600;
+          cursor: pointer;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          gap: 5px;
+          padding: 10px 3px;
+          box-shadow: -6px 0 18px rgba(0,0,0,0.35);
+        }
+        .friends-rail-handle-badge {
+          position: absolute;
+          top: -3px;
+          right: -7px;
+          min-width: 17px;
+          height: 17px;
+          padding: 0 4px;
+          border-radius: 999px;
+          background: #2a2a2a;
+          color: #888;
+          font-size: 9px;
+          font-weight: 700;
+          line-height: 17px;
+          text-align: center;
+          border: 1px solid #3a3a3a;
+        }
+        .friends-rail-handle-icon-wrap {
+          position: relative;
+          width: 28px;
+          height: 28px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #e8c547;
+        }
+        .friends-rail-handle-svg {
+          width: 24px;
+          height: 24px;
+          flex-shrink: 0;
+        }
+        .friends-rail-panel {
+          width: min(280px, calc(100vw - 50px));
+          background: #121212;
+          border-left: 1px solid #2a2a2a;
+          box-shadow: -12px 0 32px rgba(0,0,0,0.45);
+          transform: translateX(100%);
+          transition: transform 0.28s ease;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          pointer-events: none;
+          z-index: 0;
+        }
+        .friends-rail.open .friends-rail-panel { transform: translateX(0); pointer-events: auto; }
+        .friends-rail-head { padding: 14px 16px 10px; border-bottom: 1px solid #232323; }
+        .friends-rail-title { font-size: 15px; font-weight: 600; color: #f0ece4; }
+        .friends-rail-sub { font-size: 11px; color: #6ee7a8; }
+        .friends-rail-sub.muted { color: #666; }
+        .friends-rail-list { overflow-y: auto; padding: 12px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+        .friends-rail-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: #161616; border: 1px solid #252525; border-radius: 10px; }
+        .friends-rail-online { width: 8px; height: 8px; border-radius: 50%; background: #4a4a4a; flex-shrink: 0; }
+        .friends-rail-online.on { background: #2ecc71; box-shadow: 0 0 8px rgba(46, 204, 113, 0.45); }
+        .friends-rail-online.away { background: #f1c40f; box-shadow: 0 0 8px rgba(241, 196, 15, 0.4); }
+        .friends-rail-online.busy { background: #e74c3c; box-shadow: 0 0 8px rgba(231, 76, 60, 0.4); }
+        .friends-rail-name { font-size: 14px; color: #f0ece4; font-weight: 500; }
       `}</style>
 
       <nav className="nav">
@@ -925,6 +1078,7 @@ export default function GroupDetailPage({
         </div>
       </nav>
 
+      <div className={`group-detail-body has-friends-rail${friendsRailOpen ? " rail-open" : ""}`}>
       <header className="page-header">
         <div className="group-meta">
           <span className="group-label">Group</span>
@@ -1113,6 +1267,62 @@ export default function GroupDetailPage({
           </>
         )}
       </main>
+      </div>
+      <div className={`friends-rail${friendsRailOpen ? " open" : ""}`} aria-label="My friends">
+        <button
+          type="button"
+          className="friends-rail-handle"
+          onClick={() => setFriendsRailOpen((o) => !o)}
+          aria-expanded={friendsRailOpen}
+          aria-label={`Friends, ${railOnlineCount} active`}
+        >
+          <span className="friends-rail-handle-icon-wrap" aria-hidden>
+            <svg
+              className="friends-rail-handle-svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.65"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+              <circle cx="9" cy="7" r="3.5" />
+              <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+              <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+            </svg>
+            <span className="friends-rail-handle-badge">{railOnlineCount > 99 ? "99+" : railOnlineCount}</span>
+          </span>
+          <span>Friends</span>
+          <span>{friendsRailOpen ? "◀" : "▶"}</span>
+        </button>
+        <aside className="friends-rail-panel">
+          <div className="friends-rail-head">
+            <div className="friends-rail-title">Your friends</div>
+            <div className={`friends-rail-sub${railOnlineCount > 0 ? "" : " muted"}`}>
+              {railOnlineCount} of {railFriendsList.length} active
+            </div>
+          </div>
+          <div className="friends-rail-list">
+            {railFriendsList.length === 0 ? (
+              <p className="notif-empty">No friends yet.</p>
+            ) : (
+              railFriendsList.map((f) => (
+                <div key={`${f.userId}-${f.displayName}`} className="friends-rail-row">
+                  <span
+                    className={`friends-rail-online${
+                      f.isOnline ? (f.activityStatus === "away" ? " away" : f.activityStatus === "busy" ? " busy" : " on") : ""
+                    }`}
+                    title={f.isOnline ? f.activityStatus : "offline"}
+                  />
+                  <div className="avatar">{f.displayName.charAt(0).toUpperCase()}</div>
+                  <span className="friends-rail-name">{f.displayName}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </aside>
+      </div>
     </>
   );
 }
