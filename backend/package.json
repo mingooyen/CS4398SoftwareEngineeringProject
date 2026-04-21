@@ -8,8 +8,11 @@
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "format": "prettier --write \"src/**/*.ts\"",
     "db:generate": "prisma generate --schema ../database/schema.prisma",
+    "db:validate": "prisma validate --schema ../database/schema.prisma",
     "db:migrate": "prisma migrate dev --schema ../database/schema.prisma",
     "db:push": "prisma db push --schema ../database/schema.prisma",
     "db:studio": "prisma studio --schema ../database/schema.prisma",
@@ -39,6 +42,7 @@
     "prisma": "^6.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
-    "typescript-eslint": "^8.55.0"
+    "typescript-eslint": "^8.55.0",
+    "vitest": "^4.1.5"
   }
 }
