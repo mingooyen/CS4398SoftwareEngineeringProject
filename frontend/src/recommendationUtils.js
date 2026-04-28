@@ -20,6 +20,22 @@ function genreMatches(movieGenre, memberGenres) {
 }
 
 /**
+ * Percentage of this title's genre tags that overlap the group's aggregated taste prefs (member favorite genres).
+ * Returns null when the group has no prefs or the title has no genre metadata (caller may show "Mixed").
+ */
+export function groupGenreMatchPercent(movieGenreNames, memberGenrePreferences) {
+  const flat = [...memberGenrePreferences].map(normalizeGenre).filter(Boolean);
+  if (!flat.length) return null;
+  const names = (movieGenreNames || []).map((x) => String(x || "").trim()).filter(Boolean);
+  if (!names.length) return null;
+  let matched = 0;
+  for (const g of names) {
+    if (genreMatches(g, flat)) matched++;
+  }
+  return Math.round((matched / names.length) * 100);
+}
+
+/**
  * Merges admin-added catalog titles with current recommendation cards and ranks by overlap with group members' genre preferences.
  */
 export function computeGroupRecommendations(activeGroup, recommendationCards) {

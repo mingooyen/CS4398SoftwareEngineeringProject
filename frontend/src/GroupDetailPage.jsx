@@ -3,21 +3,26 @@ import {
   acceptInvite,
   acceptFriendRequest,
   denyFriendRequest,
+  demoFriendPresence,
   leaveGroup,
   normalizeName,
   readFriendLinks,
+  readFriendNotifications,
   readFriendRequests,
   readGroups,
   readInvites,
+  writeFriendNotifications,
   writeFriendRequests,
   writeGroups,
   writeInvites,
 } from "./groupDataStore.js";
 import { getGenrePreferencesForDisplayName } from "./authService.js";
+import { groupGenreMatchPercent } from "./recommendationUtils.js";
 import { createPosterErrorHandler, makePosterDataUri } from "./posterUtils.js";
 
 /** Max distinct movies the current user may vote for in one group (recommendations + vote tab). */
 const MAX_USER_VOTE_PICKS = 10;
+const MAX_NOTIFICATIONS_PER_SECTION = 5;
 
 function VoteBar({ votes, max }) {
   const pct = max > 0 ? (votes / max) * 100 : 0;
@@ -45,6 +50,7 @@ function RecommendationCard({
   const collapseFirstRef = useRef(null);
   const expandedVisualRectRef = useRef(null);
   const flipEndRef = useRef(null);
+  const flipTimeoutRef = useRef(null);
   const isLeading = soleLeaderId != null && String(soleLeaderId) === String(movie.id);
   const atPickLimit = userPicksCount >= maxUserPicks;
   const cannotAddNewVote = !movie.userVoted && atPickLimit;
@@ -82,17 +88,23 @@ function RecommendationCard({
         el.removeEventListener("transitionend", flipEndRef.current);
         flipEndRef.current = null;
       }
+      if (flipTimeoutRef.current != null) {
+        window.clearTimeout(flipTimeoutRef.current);
+        flipTimeoutRef.current = null;
+      }
       const last = el.getBoundingClientRect();
       if (last.width < 2 || last.height < 2 || first.width < 1 || first.height < 1) {
         clearSlotMinHeight();
         return;
       }
-      const dx = first.left - last.left;
-      const dy = first.top - last.top;
+      const dx =
+        first.left + first.width / 2 - (last.left + last.width / 2);
+      const dy =
+        first.top + first.height / 2 - (last.top + last.height / 2);
       const sx = first.width / last.width;
       const sy = first.height / last.height;
       el.style.transition = "none";
-      el.style.transformOrigin = "0 0";
+      el.style.transformOrigin = "50% 50%";
       el.style.transform = `translate(${dx}px, ${dy}px) scale(${sx}, ${sy})`;
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -100,16 +112,25 @@ function RecommendationCard({
             ? "transform 0.4s cubic-bezier(0.32, 0.72, 0, 1), box-shadow 0.35s ease"
             : "transform 0.34s cubic-bezier(0.32, 0.72, 0, 1)";
           el.style.transform = "";
-          const onEnd = (e) => {
-            if (e.propertyName !== "transform") return;
+          const finishFlip = () => {
             el.removeEventListener("transitionend", onEnd);
+            if (flipTimeoutRef.current != null) {
+              window.clearTimeout(flipTimeoutRef.current);
+              flipTimeoutRef.current = null;
+            }
             el.style.transition = "";
+            el.style.transform = "";
             el.style.transformOrigin = "";
             flipEndRef.current = null;
             if (!toExpanded) clearSlotMinHeight();
           };
+          const onEnd = (e) => {
+            if (e.propertyName !== "transform") return;
+            finishFlip();
+          };
           flipEndRef.current = onEnd;
           el.addEventListener("transitionend", onEnd);
+          flipTimeoutRef.current = window.setTimeout(finishFlip, 500);
         });
       });
     };
@@ -147,6 +168,10 @@ function RecommendationCard({
   useEffect(
     () => () => {
       const el = cardRef.current;
+      if (flipTimeoutRef.current != null) {
+        window.clearTimeout(flipTimeoutRef.current);
+        flipTimeoutRef.current = null;
+      }
       if (el && flipEndRef.current) {
         el.removeEventListener("transitionend", flipEndRef.current);
         el.style.transition = "";
@@ -380,12 +405,14 @@ export default function GroupDetailPage({
   const [groups, setGroups] = useState(() => readGroups());
   const [groupInvites, setGroupInvites] = useState(() => readInvites());
   const [friendRequests, setFriendRequests] = useState(() => readFriendRequests());
+  const [friendNotifications, setFriendNotifications] = useState(() => readFriendNotifications());
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [scheduled, setScheduled] = useState([]);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteName, setInviteName] = useState("");
   const [actionMsg, setActionMsg] = useState("");
   const [liveMovies, setLiveMovies] = useState([]);
+  const [tmdbGenres, setTmdbGenres] = useState([]);
   const [friendsRailOpen, setFriendsRailOpen] = useState(false);
   const [apiFriends, setApiFriends] = useState([]);
 
@@ -393,6 +420,7 @@ export default function GroupDetailPage({
     setGroups(readGroups());
     setGroupInvites(readInvites());
     setFriendRequests(readFriendRequests());
+    setFriendNotifications(readFriendNotifications());
     setExpandedPosterMovieId(null);
     expandFromGridRectRef.current = null;
     suppressPosterCloseUntilRef.current = 0;
@@ -440,6 +468,17 @@ export default function GroupDetailPage({
     return () => document.removeEventListener("pointerdown", onPointerDownCapture, true);
   }, [expandedPosterMovieId]);
 
+  useEffect(() => {
+    if (!expandedPosterMovieId) return;
+    const onScroll = () => {
+      if (Date.now() < suppressPosterCloseUntilRef.current) return;
+      expandFromGridRectRef.current = null;
+      setExpandedPosterMovieId(null);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true, capture: true });
+    return () => window.removeEventListener("scroll", onScroll, { capture: true });
+  }, [expandedPosterMovieId]);
+
   const group = useMemo(() => groups.find((g) => g.id === groupId) ?? null, [groups, groupId]);
   const activeGroup = group;
   const creatorMember = activeGroup?.members?.find((m) => m.role === "creator");
@@ -474,6 +513,15 @@ export default function GroupDetailPage({
   const visibleFriendRequests = friendRequests.filter(
     (req) => normalizeName(req.targetUserName) === normalizeName(currentUserName)
   );
+  const visibleFriendNotifications = friendNotifications.filter(
+    (note) => normalizeName(note.userName) === normalizeName(currentUserName)
+  );
+  const displayedInvites = visibleInvites.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const displayedFriendRequests = visibleFriendRequests.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const displayedFriendNotifications = visibleFriendNotifications.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const notificationBadgeCount = notificationsOpen
+    ? 0
+    : displayedInvites.length + displayedFriendRequests.length + displayedFriendNotifications.length;
   const navItems = ["Home", "My Groups", "Watchlist", ...(isSystemAdmin ? ["Admin"] : []), "Logout"];
   const railFriendsList = useMemo(() => {
     const self = normalizeName(currentUserName || "");
@@ -488,36 +536,61 @@ export default function GroupDetailPage({
       ? readFriendLinks()
           .filter((l) => normalizeName(l.userName) === self)
           .filter((l) => !apiNames.has(normalizeName(l.friendName || "")))
-          .map((l) => ({
-            userId: String(l.friendId || ""),
-            displayName: l.friendName,
-            isOnline: false,
-            activityStatus: "active",
-          }))
+          .map((l) => {
+            const presence = demoFriendPresence(l.friendName);
+            return {
+              userId: String(l.friendId || ""),
+              displayName: l.friendName,
+              isOnline: presence.isOnline,
+              activityStatus: presence.activityStatus,
+            };
+          })
       : [];
     return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [apiFriends, currentUserName]);
+  }, [apiFriends, currentUserName, friendRequests]);
   const railOnlineCount = useMemo(
     () => railFriendsList.filter((f) => f.isOnline).length,
     [railFriendsList]
   );
 
+  const tmdbGenreMap = useMemo(
+    () => new Map((tmdbGenres || []).map((g) => [Number(g.id), g.name])),
+    [tmdbGenres]
+  );
+
+  const memberPrefsList = useMemo(() => {
+    const genreSet = new Set();
+    for (const m of activeGroup?.members || []) {
+      getGenrePreferencesForDisplayName(m.name).forEach((g) => genreSet.add(g));
+    }
+    return [...genreSet];
+  }, [activeGroup?.members]);
+
   const movies = useMemo(
     () =>
-      (liveMovies || []).map((m) => ({
-        id: String(m.id),
-        title: m.title,
-        year: m.year || new Date().getFullYear(),
-        genre: "Mixed",
-        avgRating: Number(m.rating || 0) / 2,
-        votes: 0,
-        userVoted: false,
-        poster:
-          m.poster ||
-          makePosterDataUri((m.title || "MOVIE").slice(0, 16)),
-        providers: m.providers || [],
-      })),
-    [liveMovies]
+      (liveMovies || []).map((m) => {
+        const genreNames = (m.genres || [])
+          .map((id) => tmdbGenreMap.get(Number(id)))
+          .filter(Boolean);
+        const matchPct = groupGenreMatchPercent(genreNames, memberPrefsList);
+        return {
+          id: String(m.id),
+          title: m.title,
+          year: m.year || new Date().getFullYear(),
+          groupMatchPct: matchPct,
+          genre: matchPct == null ? "Mixed" : `${matchPct}% match`,
+          /** TMDB `vote_average` (0–10), global user rating */
+          tmdbVoteAverage: Number(m.rating || 0),
+          avgRating: Number(m.rating || 0) / 2,
+          votes: 0,
+          userVoted: false,
+          poster:
+            m.poster ||
+            makePosterDataUri((m.title || "MOVIE").slice(0, 16)),
+          providers: m.providers || [],
+        };
+      }),
+    [liveMovies, tmdbGenreMap, memberPrefsList]
   );
   const tabMovies = activeGroup?._uiMovies || movies;
   const maxVotes =
@@ -563,7 +636,9 @@ export default function GroupDetailPage({
         }
         return { ...m, votes: (m.votes || 0) + 1, userVoted: true };
       });
-      return prev.map((x) => (x.id === ag.id ? { ...x, _uiMovies: next } : x));
+      const updated = prev.map((x) => (x.id === ag.id ? { ...x, _uiMovies: next } : x));
+      writeGroups(updated);
+      return updated;
     });
   };
 
@@ -576,7 +651,25 @@ export default function GroupDetailPage({
     setExpandedPosterMovieId(String(movieId));
   };
 
-  const sortedMovies = [...tabMovies].sort((a, b) => (b.avgRating || 0) - (a.avgRating || 0));
+  const sortedMovies = useMemo(() => {
+    const tmdbScore = (m) => {
+      const v = m.tmdbVoteAverage;
+      if (v != null && Number.isFinite(Number(v))) return Number(v);
+      return (Number(m.avgRating) || 0) * 2;
+    };
+    return [...tabMovies].sort((a, b) => {
+      const mb =
+        b.groupMatchPct != null && Number.isFinite(Number(b.groupMatchPct))
+          ? Number(b.groupMatchPct)
+          : -1;
+      const ma =
+        a.groupMatchPct != null && Number.isFinite(Number(a.groupMatchPct))
+          ? Number(a.groupMatchPct)
+          : -1;
+      if (mb !== ma) return mb - ma;
+      return tmdbScore(b) - tmdbScore(a);
+    });
+  }, [tabMovies]);
 
   const handleSchedule = ({ movie, date, time, location }) => {
     setScheduled((prev) => [...prev, { id: Date.now(), title: movie, date, time, location }]);
@@ -603,10 +696,16 @@ export default function GroupDetailPage({
   const handleAcceptFriendRequest = (requestId) => {
     acceptFriendRequest(requestId);
     setFriendRequests(readFriendRequests());
+    setFriendNotifications(readFriendNotifications());
   };
   const handleDenyFriendRequest = (requestId) => {
     denyFriendRequest(requestId);
     setFriendRequests(readFriendRequests());
+  };
+  const dismissFriendNotification = (notificationId) => {
+    const next = friendNotifications.filter((note) => note.id !== notificationId);
+    writeFriendNotifications(next);
+    setFriendNotifications(next);
   };
 
   const handleInviteMember = () => {
@@ -667,6 +766,17 @@ export default function GroupDetailPage({
       );
     }
   };
+
+  useEffect(() => {
+    fetch("http://localhost:3000/api/v1/movies/genres")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((payload) => {
+        if (Array.isArray(payload?.genres) && payload.genres.length > 0) {
+          setTmdbGenres(payload.genres);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!activeGroup) return;
@@ -744,7 +854,7 @@ export default function GroupDetailPage({
         .notif-btn { width: 36px; height: 36px; border-radius: 10px; border: 1px solid #2e2e2e; background: #141414; color: #d2d2d2; cursor: pointer; position: relative; font-size: 16px; }
         .notif-btn:hover { border-color: #4a4a4a; color: #f0ece4; }
         .notif-badge { position: absolute; top: -6px; right: -6px; min-width: 18px; height: 18px; border-radius: 999px; background: #e74c3c; color: #fff; border: 2px solid #0d0d0d; font-size: 10px; line-height: 14px; text-align: center; padding: 0 3px; }
-        .notif-panel { position: absolute; top: 44px; left: 0; width: min(420px, calc(100vw - 40px)); background: #121212; border: 1px solid #2a2a2a; border-radius: 12px; box-shadow: 0 18px 40px rgba(0,0,0,0.45); padding: 12px; z-index: 120; }
+        .notif-panel { position: absolute; top: 44px; left: 0; width: min(420px, calc(100vw - 40px)); max-height: min(75vh, 560px); overflow-y: auto; background: #121212; border: 1px solid #2a2a2a; border-radius: 12px; box-shadow: 0 18px 40px rgba(0,0,0,0.45); padding: 12px; z-index: 120; }
         .notif-title { font-size: 12px; color: #8f8f8f; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
         .notif-empty { font-size: 13px; color: #666; padding: 6px 2px; }
         .notif-item { border: 1px solid #232323; border-radius: 10px; padding: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; background: #111; }
@@ -871,6 +981,11 @@ export default function GroupDetailPage({
           aspect-ratio: 2/3;
           min-height: 280px;
           max-height: min(72vh, 520px);
+          width: 100%;
+          min-width: 0;
+          display: grid;
+          place-items: center;
+          overflow: hidden;
         }
         .rec-poster {
           width: 100%;
@@ -880,7 +995,12 @@ export default function GroupDetailPage({
           transition: object-fit 0.35s ease, transform 0.35s ease;
         }
         .rec-card--expanded .rec-poster {
+          width: 100%;
+          height: 100%;
+          max-width: 100%;
+          max-height: 100%;
           object-fit: contain;
+          object-position: center center;
           transform: none;
         }
         .rec-body { padding: 16px; background: #111; position: relative; }
@@ -938,7 +1058,7 @@ export default function GroupDetailPage({
           top: 64px;
           right: 0;
           bottom: 0;
-          z-index: 85;
+          z-index: 110;
           display: flex;
           flex-direction: row-reverse;
           pointer-events: none;
@@ -966,19 +1086,24 @@ export default function GroupDetailPage({
         }
         .friends-rail-handle-badge {
           position: absolute;
-          top: -3px;
-          right: -7px;
-          min-width: 17px;
-          height: 17px;
-          padding: 0 4px;
+          top: -2px;
+          right: -6px;
+          min-width: 15px;
+          height: 15px;
+          padding: 0 3px;
           border-radius: 999px;
           background: #2a2a2a;
           color: #888;
-          font-size: 9px;
+          font-size: 8px;
           font-weight: 700;
-          line-height: 17px;
+          line-height: 15px;
           text-align: center;
           border: 1px solid #3a3a3a;
+        }
+        .friends-rail-handle-badge.lit {
+          background: #153524;
+          color: #8ef0b0;
+          border-color: #2ecc71;
         }
         .friends-rail-handle-icon-wrap {
           position: relative;
@@ -993,6 +1118,15 @@ export default function GroupDetailPage({
           width: 24px;
           height: 24px;
           flex-shrink: 0;
+        }
+        .friends-rail-handle-active-line {
+          font-size: 9px;
+          font-weight: 600;
+          color: #666;
+          letter-spacing: 0.02em;
+        }
+        .friends-rail-handle-active-line.on {
+          color: #6ee7a8;
         }
         .friends-rail-panel {
           width: min(280px, calc(100vw - 50px));
@@ -1025,8 +1159,10 @@ export default function GroupDetailPage({
         <div className="nav-left">
           <button type="button" className="notif-btn" aria-label="Notifications" onClick={() => setNotificationsOpen((v) => !v)}>
             🔔
-            {visibleInvites.length + visibleFriendRequests.length > 0 ? (
-              <span className="notif-badge">{visibleInvites.length + visibleFriendRequests.length}</span>
+            {notificationBadgeCount > 0 ? (
+              <span className="notif-badge">
+                {notificationBadgeCount}
+              </span>
             ) : null}
           </button>
           {notificationsOpen ? (
@@ -1035,7 +1171,7 @@ export default function GroupDetailPage({
               {visibleInvites.length === 0 ? (
                 <p className="notif-empty">No pending invites for you.</p>
               ) : (
-                visibleInvites.map((invite) => (
+                displayedInvites.map((invite) => (
                   <div key={invite.id} className="notif-item">
                     <div className="notif-meta">
                       <div className="notif-text">
@@ -1051,18 +1187,39 @@ export default function GroupDetailPage({
                 ))
               )}
               <p className="notif-title" style={{ marginTop: 12 }}>Friend Requests</p>
-              {visibleFriendRequests.map((req) => (
-                <div key={req.id} className="notif-item">
-                  <div className="notif-text">
-                    <p className="notif-main">{req.requesterName} sent you a friend request</p>
-                    <p className="notif-sub">Requester ID: {req.requesterId}</p>
+              {visibleFriendRequests.length === 0 ? (
+                <p className="notif-empty">No friend requests.</p>
+              ) : (
+                displayedFriendRequests.map((req) => (
+                  <div key={req.id} className="notif-item">
+                    <div className="notif-text">
+                      <p className="notif-main">{req.requesterName} sent you a friend request</p>
+                      <p className="notif-sub">Requester ID: {req.requesterId}</p>
+                    </div>
+                    <div className="notif-actions">
+                      <button className="notif-approve" type="button" onClick={() => handleAcceptFriendRequest(req.id)}>Accept</button>
+                      <button className="notif-deny" type="button" onClick={() => handleDenyFriendRequest(req.id)}>Deny</button>
+                    </div>
                   </div>
-                  <div className="notif-actions">
-                    <button className="notif-approve" type="button" onClick={() => handleAcceptFriendRequest(req.id)}>Accept</button>
-                    <button className="notif-deny" type="button" onClick={() => handleDenyFriendRequest(req.id)}>Deny</button>
+                ))
+              )}
+              <p className="notif-title" style={{ marginTop: 12 }}>Friend Alerts</p>
+              {visibleFriendNotifications.length === 0 ? (
+                <p className="notif-empty">No friend alerts.</p>
+              ) : (
+                displayedFriendNotifications.map((note) => (
+                  <div key={note.id} className="notif-item">
+                    <div className="notif-text">
+                      <p className="notif-main">{note.message}</p>
+                    </div>
+                    <div className="notif-actions">
+                      <button className="notif-deny" type="button" onClick={() => dismissFriendNotification(note.id)}>
+                        Dismiss
+                      </button>
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           ) : null}
           <button type="button" className="nav-logo" onClick={() => onNavigate("home", { homeTab: "Home" })} style={{ background: "none", border: "none", cursor: "pointer" }}>
@@ -1185,7 +1342,6 @@ export default function GroupDetailPage({
                 >
                   Your picks: {userPicksCount} / {MAX_USER_VOTE_PICKS}
                 </span>
-                <span className="sort-note">Ranked by genre match to members&apos; tastes + catalog</span>
               </div>
             </div>
             <div className="rec-grid">
@@ -1291,9 +1447,17 @@ export default function GroupDetailPage({
               <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
               <path d="M16 3.13a4 4 0 0 1 0 7.75" />
             </svg>
-            <span className="friends-rail-handle-badge">{railOnlineCount > 99 ? "99+" : railOnlineCount}</span>
+            <span className={`friends-rail-handle-badge${railOnlineCount > 0 ? " lit" : ""}`}>
+              {railOnlineCount > 99 ? "99+" : railOnlineCount}
+            </span>
           </span>
           <span>Friends</span>
+          <span
+            className={`friends-rail-handle-active-line${railOnlineCount > 0 ? " on" : ""}`}
+            aria-hidden
+          >
+            {railOnlineCount} active
+          </span>
           <span>{friendsRailOpen ? "◀" : "▶"}</span>
         </button>
         <aside className="friends-rail-panel">

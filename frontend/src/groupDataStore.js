@@ -1,45 +1,50 @@
+import {
+  cloneMockFriendLinks,
+  cloneMockFriendNotifications,
+  cloneMockFriendRequests,
+  cloneMockGroups,
+  cloneMockInvites,
+} from "./mockData.js";
+
 const GROUPS_STORAGE_KEY = "mnp.data.groups";
 const GROUP_INVITES_STORAGE_KEY = "mnp.data.groupInvites";
+const GROUP_INVITES_SEEDED_KEY = "mnp.data.groupInvites.seeded.v4";
+const GROUP_INVITES_TRIMMED_KEY = "mnp.data.groupInvites.trimmed.v1";
 const GROUP_JOIN_REQUESTS_STORAGE_KEY = "mnp.group.joinRequests";
 const FRIEND_REQUESTS_STORAGE_KEY = "mnp.data.friendRequests";
+const FRIEND_REQUESTS_SEEDED_KEY = "mnp.data.friendRequests.seeded.v4";
+const FRIEND_REQUESTS_TRIMMED_KEY = "mnp.data.friendRequests.trimmed.v1";
 const FRIEND_LINKS_STORAGE_KEY = "mnp.data.friendLinks";
+const FRIEND_LINKS_SEEDED_KEY = "mnp.data.friendLinks.seeded.v2";
 const FRIEND_NOTIFICATIONS_STORAGE_KEY = "mnp.data.friendNotifications";
+const FRIEND_NOTIFICATIONS_SEEDED_KEY = "mnp.data.friendNotifications.seeded.v1";
 
 const normalizeName = (value = "") => value.trim().toLowerCase();
+const MAX_PENDING_DEMO_NOTIFICATIONS_PER_USER = 5;
 
 export const DEFAULT_FRIEND_REQUESTS = [
-  {
-    id: "fr-1",
-    requesterName: "Mi",
-    requesterId: "1001",
-    targetUserName: "Xavier",
-    status: "pending",
-  },
+  ...cloneMockFriendRequests(),
 ];
-export const DEFAULT_FRIEND_LINKS = [
-  {
-    userName: "Xavier",
-    userId: "1000",
-    friendName: "Mi",
-    friendId: "1001",
-  },
-  {
-    userName: "Mi",
-    userId: "1001",
-    friendName: "Xavier",
-    friendId: "1000",
-  },
-];
+export const DEFAULT_FRIEND_LINKS = [...cloneMockFriendLinks()];
 export const DEFAULT_FRIEND_NOTIFICATIONS = [
-  {
-    id: "fn-1",
-    userName: "Xavier",
-    message: "Mi is already your friend.",
-    type: "already-friends",
-  },
+  ...cloneMockFriendNotifications(),
 ];
 
 export { normalizeName };
+
+function trimByUser(items, getUserName, limit = MAX_PENDING_DEMO_NOTIFICATIONS_PER_USER) {
+  const counts = new Map();
+  const kept = [];
+  for (const item of items) {
+    const userKey = normalizeName(getUserName(item));
+    if (!userKey) continue;
+    const nextCount = (counts.get(userKey) || 0) + 1;
+    if (nextCount > limit) continue;
+    counts.set(userKey, nextCount);
+    kept.push(item);
+  }
+  return kept;
+}
 
 export function readLocalList(key, fallback) {
   try {
@@ -53,7 +58,19 @@ export function readLocalList(key, fallback) {
 }
 
 export function readGroups() {
-  return readLocalList(GROUPS_STORAGE_KEY, []);
+  const storedGroups = readLocalList(GROUPS_STORAGE_KEY, []);
+  const mockGroups = cloneMockGroups();
+  const storedById = new Map((storedGroups || []).map((g) => [String(g.id), g]));
+  const merged = [
+    ...mockGroups.map((g) => storedById.get(String(g.id)) ?? g),
+    ...storedGroups.filter((g) => !mockGroups.some((m) => String(m.id) === String(g.id))),
+  ];
+
+  if (merged.length !== storedGroups.length) {
+    writeGroups(merged);
+  }
+
+  return merged;
 }
 
 export function writeGroups(groups) {
@@ -232,7 +249,44 @@ export function leaveGroup(groupId, userName) {
 }
 
 export function readInvites() {
-  return readLocalList(GROUP_INVITES_STORAGE_KEY, []);
+  const storedInvites = readLocalList(GROUP_INVITES_STORAGE_KEY, []);
+  const alreadyTrimmed = localStorage.getItem(GROUP_INVITES_TRIMMED_KEY) === "1";
+  let normalizedInvites = storedInvites;
+  if (!alreadyTrimmed) {
+    normalizedInvites = trimByUser(
+      storedInvites,
+      (invite) => String(invite?.invitedUserName || ""),
+      MAX_PENDING_DEMO_NOTIFICATIONS_PER_USER
+    );
+    if (normalizedInvites.length !== storedInvites.length) {
+      writeInvites(normalizedInvites);
+    }
+    localStorage.setItem(GROUP_INVITES_TRIMMED_KEY, "1");
+  }
+  const alreadySeeded = localStorage.getItem(GROUP_INVITES_SEEDED_KEY) === "1";
+  if (alreadySeeded) return normalizedInvites;
+  const seededInvites = cloneMockInvites();
+  if (seededInvites.length === 0) {
+    localStorage.setItem(GROUP_INVITES_SEEDED_KEY, "1");
+    return normalizedInvites;
+  }
+
+  const inviteKeys = new Set(
+    normalizedInvites.map(
+      (invite) =>
+        `${String(invite.groupId)}::${normalizeName(invite.invitedUserName)}::${normalizeName(invite.inviterName)}`
+    )
+  );
+  const missingInvites = seededInvites.filter(
+    (invite) =>
+      !inviteKeys.has(
+        `${String(invite.groupId)}::${normalizeName(invite.invitedUserName)}::${normalizeName(invite.inviterName)}`
+      )
+  );
+  const merged = missingInvites.length === 0 ? normalizedInvites : [...normalizedInvites, ...missingInvites];
+  writeInvites(merged);
+  localStorage.setItem(GROUP_INVITES_SEEDED_KEY, "1");
+  return merged;
 }
 
 export function writeInvites(invites) {
@@ -240,7 +294,44 @@ export function writeInvites(invites) {
 }
 
 export function readFriendRequests() {
-  return readLocalList(FRIEND_REQUESTS_STORAGE_KEY, []);
+  const storedRequests = readLocalList(FRIEND_REQUESTS_STORAGE_KEY, []);
+  const alreadyTrimmed = localStorage.getItem(FRIEND_REQUESTS_TRIMMED_KEY) === "1";
+  let normalizedRequests = storedRequests;
+  if (!alreadyTrimmed) {
+    normalizedRequests = trimByUser(
+      storedRequests,
+      (req) => String(req?.targetUserName || ""),
+      MAX_PENDING_DEMO_NOTIFICATIONS_PER_USER
+    );
+    if (normalizedRequests.length !== storedRequests.length) {
+      writeFriendRequests(normalizedRequests);
+    }
+    localStorage.setItem(FRIEND_REQUESTS_TRIMMED_KEY, "1");
+  }
+  const alreadySeeded = localStorage.getItem(FRIEND_REQUESTS_SEEDED_KEY) === "1";
+  if (alreadySeeded) return normalizedRequests;
+  if (DEFAULT_FRIEND_REQUESTS.length === 0) return normalizedRequests;
+  const requestKeys = new Set(
+    normalizedRequests
+      .filter((req) => req.status === "pending")
+      .map(
+        (req) =>
+          `${normalizeName(req.requesterName)}::${normalizeName(req.targetUserName)}::${req.status}`
+      )
+  );
+  const missingRequests = DEFAULT_FRIEND_REQUESTS.filter(
+    (req) =>
+      !requestKeys.has(
+        `${normalizeName(req.requesterName)}::${normalizeName(req.targetUserName)}::${req.status}`
+      )
+  );
+  const merged =
+    missingRequests.length === 0
+      ? normalizedRequests
+      : [...normalizedRequests, ...missingRequests.map((req) => ({ ...req }))];
+  writeFriendRequests(merged);
+  localStorage.setItem(FRIEND_REQUESTS_SEEDED_KEY, "1");
+  return merged;
 }
 
 export function writeFriendRequests(requests) {
@@ -248,7 +339,25 @@ export function writeFriendRequests(requests) {
 }
 
 export function readFriendLinks() {
-  return readLocalList(FRIEND_LINKS_STORAGE_KEY, []);
+  const storedLinks = readLocalList(FRIEND_LINKS_STORAGE_KEY, []);
+  const alreadySeeded = localStorage.getItem(FRIEND_LINKS_SEEDED_KEY) === "1";
+  if (alreadySeeded) return storedLinks;
+  if (DEFAULT_FRIEND_LINKS.length === 0) return storedLinks;
+  const linkKeys = new Set(
+    storedLinks.map(
+      (link) => `${normalizeName(link.userName)}::${normalizeName(link.friendName)}`
+    )
+  );
+  const missingLinks = DEFAULT_FRIEND_LINKS.filter(
+    (link) => !linkKeys.has(`${normalizeName(link.userName)}::${normalizeName(link.friendName)}`)
+  );
+  const merged =
+    missingLinks.length === 0
+      ? storedLinks
+      : [...storedLinks, ...missingLinks.map((link) => ({ ...link }))];
+  writeFriendLinks(merged);
+  localStorage.setItem(FRIEND_LINKS_SEEDED_KEY, "1");
+  return merged;
 }
 
 export function writeFriendLinks(links) {
@@ -256,7 +365,23 @@ export function writeFriendLinks(links) {
 }
 
 export function readFriendNotifications() {
-  return readLocalList(FRIEND_NOTIFICATIONS_STORAGE_KEY, []);
+  const stored = readLocalList(FRIEND_NOTIFICATIONS_STORAGE_KEY, []);
+  const alreadySeeded = localStorage.getItem(FRIEND_NOTIFICATIONS_SEEDED_KEY) === "1";
+  if (alreadySeeded) return stored;
+  if (DEFAULT_FRIEND_NOTIFICATIONS.length === 0) return stored;
+
+  const notificationKeys = new Set(
+    stored.map((note) => `${normalizeName(note.userName)}::${String(note.message || "").trim()}`)
+  );
+  const missing = DEFAULT_FRIEND_NOTIFICATIONS.filter(
+    (note) =>
+      !notificationKeys.has(`${normalizeName(note.userName)}::${String(note.message || "").trim()}`)
+  );
+  const merged =
+    missing.length === 0 ? stored : [...stored, ...missing.map((note) => ({ ...note }))];
+  writeFriendNotifications(merged);
+  localStorage.setItem(FRIEND_NOTIFICATIONS_SEEDED_KEY, "1");
+  return merged;
 }
 
 export function writeFriendNotifications(notifications) {
@@ -274,6 +399,18 @@ export function pushFriendNotification(userName, message, type = "info") {
     },
     ...all,
   ]);
+}
+
+export function demoFriendPresence(displayName = "") {
+  const key = normalizeName(displayName);
+  let hash = 0;
+  for (let i = 0; i < key.length; i += 1) {
+    hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+  }
+  const statuses = ["active", "away", "busy", "active", "invisible"];
+  const activityStatus = statuses[hash % statuses.length] || "active";
+  const isOnline = activityStatus !== "invisible" && hash % 4 !== 0;
+  return { activityStatus, isOnline };
 }
 
 function hasFriendLink(links, userName, friendName) {
