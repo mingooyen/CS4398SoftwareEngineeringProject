@@ -832,6 +832,43 @@ export default function HomePage({
     [accessToken]
   );
 
+  const addForYouGenreFromTag = useCallback(
+    async (name) => {
+      const cleanName = String(name || "").trim();
+      if (!cleanName || !accessToken) return;
+      const key = cleanName.toLowerCase();
+      const prevFav = savedFavRef.current;
+      const prevExcl = savedExclRef.current;
+      const nextFav = prevFav.some((g) => g.toLowerCase() === key) ? [...prevFav] : [...prevFav, cleanName];
+      const nextExcl = prevExcl.filter((g) => g.toLowerCase() !== key);
+      const changed =
+        nextFav.length !== prevFav.length || nextExcl.length !== prevExcl.length;
+      if (!changed) return;
+      setSavedFavoriteGenres(nextFav);
+      setSavedExcludedGenres(nextExcl);
+      try {
+        const res = await fetch("http://localhost:3000/api/v1/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            preferences: { favoriteGenres: nextFav, forYouExcludedGenres: nextExcl },
+          }),
+        });
+        if (!res.ok) {
+          setSavedFavoriteGenres(prevFav);
+          setSavedExcludedGenres(prevExcl);
+        }
+      } catch {
+        setSavedFavoriteGenres(prevFav);
+        setSavedExcludedGenres(prevExcl);
+      }
+    },
+    [accessToken]
+  );
+
   useEffect(() => {
     setHomeVisibleCount(HOME_PAGE_CHUNK);
   }, [homeNav, browsePreset, selectedGenreName, highlightedName, query]);
@@ -2163,6 +2200,37 @@ export default function HomePage({
               </div>
             </div>
           ) : null}
+          <div className="genre-chips-section">
+            <div className="genre-chip-head-row">
+              <p className="genre-chip-hint">
+                Pick a list above, then narrow with genre or theme chips — scroll sideways for more.
+              </p>
+              <span className="result-count result-count--genre-corner">
+                {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK
+                  ? `${displayedMovies.length} of ${filtered.length} movies`
+                  : `${filtered.length} movies`}
+              </span>
+            </div>
+            <div className="genre-chip-row">
+              {[...(browseGenres.length ? browseGenres : [])]
+                .sort((a, b) => a.name.localeCompare(b.name))
+                .map((g) => (
+                  <button
+                    key={g.id}
+                    type="button"
+                    className={`genre-pill ${selectedGenreName === g.name ? "active" : ""}`}
+                    onClick={() => {
+                      if (browsePreset === "foryou") {
+                        addForYouGenreFromTag(g.name);
+                      }
+                      setSelectedGenreName((prev) => (prev === g.name ? null : g.name));
+                    }}
+                  >
+                    {g.name}
+                  </button>
+                ))}
+            </div>
+          </div>
         </div>
       ) : null}
 

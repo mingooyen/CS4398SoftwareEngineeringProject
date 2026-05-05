@@ -536,18 +536,15 @@ export default function GroupDetailPage({
       ? readFriendLinks()
           .filter((l) => normalizeName(l.userName) === self)
           .filter((l) => !apiNames.has(normalizeName(l.friendName || "")))
-          .map((l) => {
-            const presence = demoFriendPresence(l.friendName);
-            return {
-              userId: String(l.friendId || ""),
-              displayName: l.friendName,
-              isOnline: presence.isOnline,
-              activityStatus: presence.activityStatus,
-            };
-          })
+          .map((l) => ({
+            userId: String(l.friendId || ""),
+            displayName: l.friendName,
+            isOnline: false,
+            activityStatus: "active",
+          }))
       : [];
     return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
-  }, [apiFriends, currentUserName, friendRequests]);
+  }, [apiFriends, currentUserName]);
   const railOnlineCount = useMemo(
     () => railFriendsList.filter((f) => f.isOnline).length,
     [railFriendsList]
@@ -1058,7 +1055,7 @@ export default function GroupDetailPage({
           top: 64px;
           right: 0;
           bottom: 0;
-          z-index: 110;
+          z-index: 85;
           display: flex;
           flex-direction: row-reverse;
           pointer-events: none;
