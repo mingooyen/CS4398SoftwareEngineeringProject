@@ -4,6 +4,7 @@ import {
   acceptFriendRequest,
   areFriends,
   denyInvite,
+  demoFriendPresence,
   denyFriendRequest,
   normalizeName,
   readFriendLinks,
@@ -14,8 +15,114 @@ import {
   writeFriendNotifications,
 } from "./groupDataStore.js";
 import { isUserBannedForFriend } from "./adminDataStore.js";
+import { getStoredSession } from "./authService.js";
 import { buildOfflineMovies } from "./offlineCatalog.js";
 import { createPosterErrorHandler, makePosterDataUri } from "./posterUtils.js";
+
+/** When the server cannot save (offline, DB down), keep stars from snapping back after refresh. Scoped per logged-in user. */
+function ratingsBackupStorageKey() {
+  const uid = getStoredSession()?.userId;
+  return uid ? `mnp.ratings.backup.${uid}` : null;
+}
+
+function readLocalRatingBackup() {
+  const key = ratingsBackupStorageKey();
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLocalRatingBackup(map) {
+  const key = ratingsBackupStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(map));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function mergeOneLocalRating(idKey, score) {
+  const next = { ...readLocalRatingBackup(), [idKey]: score };
+  writeLocalRatingBackup(next);
+}
+
+function pendingRatingsStorageKey() {
+  const uid = getStoredSession()?.userId;
+  return uid ? `mnp.ratings.pending.${uid}` : null;
+}
+
+function readPendingRatings() {
+  const key = pendingRatingsStorageKey();
+  if (!key) return {};
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return {};
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? o : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePendingRatings(map) {
+  const key = pendingRatingsStorageKey();
+  if (!key) return;
+  try {
+    localStorage.setItem(key, JSON.stringify(map));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function upsertPendingRating(idKey, score) {
+  const next = { ...readPendingRatings(), [String(idKey)]: Number(score) };
+  writePendingRatings(next);
+}
+
+function removePendingRating(idKey) {
+  const next = { ...readPendingRatings() };
+  delete next[String(idKey)];
+  writePendingRatings(next);
+}
+
+async function flushPendingRatings(accessToken) {
+  const pending = { ...readPendingRatings() };
+  const entries = Object.entries(pending);
+  if (!entries.length || !accessToken) return {};
+
+  const synced = {};
+  for (const [idKey, score] of entries) {
+    try {
+      const res = await fetch("http://localhost:3000/api/v1/movies/watched", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ tmdbId: Number(idKey), rating: Number(score) }),
+      });
+      if (res.ok) {
+        synced[idKey] = Number(score);
+        delete pending[idKey];
+        continue;
+      }
+      if (res.status === 400 || res.status === 401 || res.status === 403) {
+        delete pending[idKey];
+      }
+    } catch {
+      // Keep pending for next retry.
+    }
+  }
+  writePendingRatings(pending);
+  return synced;
+}
 
 /** Now Showing row: preset id → TMDB discover when no genre chip is selected. */
 const HOME_BROWSE_PRESETS = [
@@ -36,6 +143,7 @@ const HOME_BROWSE_PRESETS = [
 ];
 
 const ACTIVITY_STATUS_KEY = "mnp.ui.activityStatus";
+const MAX_NOTIFICATIONS_PER_SECTION = 5;
 const ACTIVITY_STATUS_OPTIONS = [
   { value: "active", label: "Active" },
   { value: "away", label: "Away" },
@@ -61,31 +169,39 @@ function readInitialActivityStatus() {
 
 function StarRating({ movieId, initialRating, onRate }) {
   const [hovered, setHovered] = useState(0);
-  const [selected, setSelected] = useState(initialRating || 0);
+  const activeRating = hovered || Number(initialRating) || 0;
 
-  useEffect(() => {
-    setSelected(initialRating || 0);
-  }, [movieId, initialRating]);
-
-  const handleRate = (score) => {
-    setSelected(score);
-    onRate(movieId, score);
+  const commit = (score) => {
+    if (!Number.isFinite(Number(score))) return;
+    onRate(movieId, Number(score));
   };
 
   return (
-    <div className="card-star-row">
+    <div
+      className="card-star-row"
+      role="radiogroup"
+      aria-label="Rate this movie"
+      onMouseLeave={() => setHovered(0)}
+      onClick={(e) => e.stopPropagation()}
+    >
       {[1, 2, 3, 4, 5].map((star) => (
         <button
           key={star}
-          onClick={() => handleRate(star)}
+          type="button"
+          role="radio"
+          aria-checked={Number(initialRating) === star}
+          onClick={(event) => {
+            event.stopPropagation();
+            setHovered(0);
+            commit(star);
+          }}
           onMouseEnter={() => setHovered(star)}
-          onMouseLeave={() => setHovered(0)}
           style={{
             background: "none",
             border: "none",
             cursor: "pointer",
             fontSize: "18px",
-            color: star <= (hovered || selected) ? "#f5c518" : "#444",
+            color: star <= activeRating ? "#f5c518" : "#444",
             transition: "color 0.15s, transform 0.1s",
             transform: star <= hovered ? "scale(1.2)" : "scale(1)",
             padding: "2px",
@@ -199,8 +315,16 @@ export default function HomePage({
   const [savedExcludedGenres, setSavedExcludedGenres] = useState([]);
   const savedFavRef = useRef([]);
   const savedExclRef = useRef([]);
+  /** Keep in sync every render so async handlers (tag click, rate) never read stale prefs before useEffect runs. */
+  savedFavRef.current = savedFavoriteGenres;
+  savedExclRef.current = savedExcludedGenres;
+  /** Bumped on local preference writes so a slow initial GET cannot clobber optimistic updates (e.g. genre tags). */
+  const prefsSyncGenRef = useRef(0);
   /** Latest TMDB genre id[] per movie id (ref only—avoid discover refetch loops). */
   const movieGenresByIdRef = useRef({});
+  /** Latest ratings map so merge/discover can read current values without listing `ratings` on discover effect deps (every star tap was refetching movies and racing the save). */
+  const ratingsRef = useRef(ratings);
+  ratingsRef.current = ratings;
   /** Preset from HOME_BROWSE_PRESETS when no genre chip is selected */
   const [browsePreset, setBrowsePreset] = useState("foryou");
   /** When set, list is filtered to this TMDB genre name (Action, Drama, …). */
@@ -221,6 +345,12 @@ export default function HomePage({
   const visibleFriendNotifications = friendNotifications.filter(
     (note) => normalizeName(note.userName) === normalizeName(highlightedName || "")
   );
+  const displayedInvites = visibleInvites.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const displayedFriendRequests = visibleFriendRequests.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const displayedFriendNotifications = visibleFriendNotifications.slice(0, MAX_NOTIFICATIONS_PER_SECTION);
+  const notificationBadgeCount = notificationsOpen
+    ? 0
+    : displayedInvites.length + displayedFriendRequests.length + displayedFriendNotifications.length;
 
   /** Server friends (Mongo friendships) with `isOnline` from presence JSON. */
   const [apiFriends, setApiFriends] = useState([]);
@@ -238,12 +368,15 @@ export default function HomePage({
         ? readFriendLinks()
             .filter((l) => normalizeName(l.userName) === self)
             .filter((l) => !apiNames.has(normalizeName(l.friendName || "")))
-            .map((l) => ({
-              userId: String(l.friendId || ""),
-              displayName: l.friendName,
-              isOnline: false,
-              activityStatus: "active",
-            }))
+            .map((l) => {
+              const presence = demoFriendPresence(l.friendName);
+              return {
+                userId: String(l.friendId || ""),
+                displayName: l.friendName,
+                isOnline: presence.isOnline,
+                activityStatus: presence.activityStatus,
+              };
+            })
         : [];
     return [...fromApi, ...fromLocal].sort((a, b) => a.displayName.localeCompare(b.displayName));
   }, [apiFriends, highlightedName, friendRequests]);
@@ -280,69 +413,66 @@ export default function HomePage({
   const handleRate = (movieId, score) => {
     const idKey = String(movieId);
     setRatings((prev) => ({ ...prev, [idKey]: score }));
-
-    if (isAuthenticated && accessToken) {
-      fetch("http://localhost:3000/api/v1/movies/watched", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ tmdbId: Number(movieId), rating: Number(score) }),
-      })
-        .then((res) => {
-          if (!res.ok) return null;
-          return fetch("http://localhost:3000/api/v1/movies/ratings", {
-            headers: { Authorization: `Bearer ${accessToken}` },
-          });
-        })
-        .then((res) => (res && res.ok ? res.json() : null))
-        .then((payload) => {
-          if (payload?.ratings && typeof payload.ratings === "object") {
-            setRatings(payload.ratings);
-          }
-        })
-        .catch(() => {});
-    }
+    mergeOneLocalRating(idKey, score);
+    upsertPendingRating(idKey, score);
 
     if (!isAuthenticated || !accessToken) return;
-    if (Number(score) < 4) return;
-    const movie = movies.find((m) => String(m.id) === idKey);
-    const gids = movie?.genres;
-    if (!Array.isArray(gids) || !gids.length || !browseGenres.length) return;
-    const idToName = new Map(browseGenres.map((g) => [Number(g.id), g.name]));
-    const names = [...new Set(gids.map((gid) => idToName.get(Number(gid))).filter(Boolean))];
-    if (!names.length) return;
 
-    const fav = savedFavRef.current;
-    const excl = savedExclRef.current;
-    const seen = new Set(fav.map((x) => x.toLowerCase()));
-    const nextFav = [...fav];
-    let added = false;
-    for (const nm of names) {
-      const key = nm.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      nextFav.push(nm);
-      added = true;
-    }
-    if (!added) return;
+    void (async () => {
+      try {
+        const saveRes = await fetch("http://localhost:3000/api/v1/movies/watched", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ tmdbId: Number(movieId), rating: Number(score) }),
+        });
+        if (!saveRes.ok) {
+          // Local-first UX: keep rating locally and retry in background queue.
+          return;
+        }
+        removePendingRating(idKey);
 
-    fetch("http://localhost:3000/api/v1/users/me", {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        preferences: { favoriteGenres: nextFav },
-      }),
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(() => {
+        if (Number(score) < 4) return;
+        const movie = movies.find((m) => String(m.id) === idKey);
+        const gids = movie?.genres;
+        if (!Array.isArray(gids) || !gids.length || !browseGenres.length) return;
+        const idToName = new Map(browseGenres.map((g) => [Number(g.id), g.name]));
+        const names = [...new Set(gids.map((gid) => idToName.get(Number(gid))).filter(Boolean))];
+        if (!names.length) return;
+
+        const fav = savedFavRef.current;
+        const seen = new Set(fav.map((x) => x.toLowerCase()));
+        const nextFav = [...fav];
+        let added = false;
+        for (const nm of names) {
+          const key = nm.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          nextFav.push(nm);
+          added = true;
+        }
+        if (!added) return;
+
+        const prefsRes = await fetch("http://localhost:3000/api/v1/users/me", {
+          method: "PATCH",
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            preferences: { favoriteGenres: nextFav },
+          }),
+        });
+        if (!prefsRes.ok) return;
+        prefsSyncGenRef.current += 1;
+        savedFavRef.current = nextFav;
         setSavedFavoriteGenres(nextFav);
-      })
-      .catch(() => {});
+      } catch {
+        // Leave optimistic + pending; sync effect will retry.
+      }
+    })();
   };
 
   const handleWatchlist = (movieId, added) => {
@@ -528,37 +658,42 @@ export default function HomePage({
       .catch(() => {});
   }, []);
 
-  useEffect(() => {
-    savedFavRef.current = savedFavoriteGenres;
-  }, [savedFavoriteGenres]);
-  useEffect(() => {
-    savedExclRef.current = savedExcludedGenres;
-  }, [savedExcludedGenres]);
+  const pullPreferencesIfStillCurrent = useCallback(
+    (capturedGen) => {
+      if (!accessToken) return;
+      fetch("http://localhost:3000/api/v1/users/me/preferences", {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((payload) => {
+          if (capturedGen !== prefsSyncGenRef.current) return;
+          const g = payload?.preferences?.favoriteGenres;
+          const x = payload?.preferences?.forYouExcludedGenres;
+          const activity = normalizeActivityStatus(payload?.preferences?.activityStatus);
+          setSavedFavoriteGenres(Array.isArray(g) ? g.filter(Boolean) : []);
+          setSavedExcludedGenres(Array.isArray(x) ? x.filter(Boolean) : []);
+          setMyActivityStatus(activity);
+        })
+        .catch(() => {
+          if (capturedGen !== prefsSyncGenRef.current) return;
+          setSavedFavoriteGenres([]);
+          setSavedExcludedGenres([]);
+          setMyActivityStatus("active");
+        });
+    },
+    [accessToken]
+  );
 
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
+      prefsSyncGenRef.current = 0;
       setSavedFavoriteGenres([]);
       setSavedExcludedGenres([]);
       return;
     }
-    fetch("http://localhost:3000/api/v1/users/me/preferences", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((payload) => {
-        const g = payload?.preferences?.favoriteGenres;
-        const x = payload?.preferences?.forYouExcludedGenres;
-        const activity = normalizeActivityStatus(payload?.preferences?.activityStatus);
-        setSavedFavoriteGenres(Array.isArray(g) ? g.filter(Boolean) : []);
-        setSavedExcludedGenres(Array.isArray(x) ? x.filter(Boolean) : []);
-        setMyActivityStatus(activity);
-      })
-      .catch(() => {
-        setSavedFavoriteGenres([]);
-        setSavedExcludedGenres([]);
-        setMyActivityStatus("active");
-      });
-  }, [isAuthenticated, accessToken]);
+    const genAtStart = prefsSyncGenRef.current;
+    pullPreferencesIfStillCurrent(genAtStart);
+  }, [isAuthenticated, accessToken, pullPreferencesIfStillCurrent]);
 
   useEffect(() => {
     if (!isAuthenticated || !accessToken) {
@@ -570,35 +705,78 @@ export default function HomePage({
     })
       .then((res) => (res.ok ? res.json() : null))
       .then((payload) => {
-        if (payload?.ratings && typeof payload.ratings === "object") {
-          setRatings(payload.ratings);
-        }
+        const api = payload?.ratings && typeof payload.ratings === "object" ? payload.ratings : {};
+        const merged = { ...api, ...readLocalRatingBackup() };
+        setRatings(merged);
+        writeLocalRatingBackup(merged);
       })
-      .catch(() => {});
+      .catch(() => {
+        setRatings(readLocalRatingBackup());
+      });
+  }, [isAuthenticated, accessToken]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !accessToken) return;
+    let cancelled = false;
+
+    const syncPending = () => {
+      void flushPendingRatings(accessToken).then((synced) => {
+        if (cancelled) return;
+        const keys = Object.keys(synced);
+        if (!keys.length) return;
+        setRatings((prev) => {
+          const next = { ...prev, ...synced };
+          writeLocalRatingBackup(next);
+          return next;
+        });
+      });
+    };
+
+    syncPending();
+    const intervalId = window.setInterval(syncPending, 4000);
+    window.addEventListener("online", syncPending);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("online", syncPending);
+    };
   }, [isAuthenticated, accessToken]);
 
   const mergeForYouGenreNames = useCallback((idLookup) => {
     if (!isAuthenticated) return [];
     const idToName = new Map(browseGenres.map((g) => [Number(g.id), g.name]));
+    const excluded = new Set(
+      (savedExcludedGenres || []).map((s) => String(s || "").trim().toLowerCase()).filter(Boolean)
+    );
     const fromPrefs = (savedFavoriteGenres || []).filter(Boolean);
     const merged = [...fromPrefs];
-    const seen = new Set(merged.map((x) => x.toLowerCase()));
-    for (const [movieId, score] of Object.entries(ratings)) {
+    const seen = new Set(merged.map((x) => String(x || "").trim().toLowerCase()));
+    for (const [movieId, score] of Object.entries(ratingsRef.current)) {
       if (Number(score) < 4) continue;
       const gids = idLookup(String(movieId));
       if (!Array.isArray(gids)) continue;
       for (const gid of gids) {
         const name = idToName.get(Number(gid));
         if (!name) continue;
-        const k = name.toLowerCase();
+        const k = String(name).trim().toLowerCase();
+        if (excluded.has(k)) continue;
         if (seen.has(k)) continue;
         seen.add(k);
-        merged.push(name);
+        merged.push(String(name).trim());
       }
     }
-    const excluded = new Set((savedExcludedGenres || []).map((s) => s.toLowerCase()));
-    return merged.filter((g) => !excluded.has(g.toLowerCase()));
-  }, [isAuthenticated, browseGenres, savedFavoriteGenres, savedExcludedGenres, ratings]);
+    return merged.filter((g) => !excluded.has(String(g || "").trim().toLowerCase()));
+  }, [isAuthenticated, browseGenres, savedFavoriteGenres, savedExcludedGenres]);
+
+  /** Only 4★+ rows affect For you discover genres — avoids refetching the grid on every 1–3★ tap. */
+  const forYouRatingsDigest = useMemo(() => {
+    return Object.entries(ratings)
+      .filter(([, s]) => Number(s) >= 4)
+      .map(([id, s]) => `${id}:${Number(s)}`)
+      .sort()
+      .join("|");
+  }, [ratings]);
 
   const forYouTasteLabels = useMemo(
     () =>
@@ -607,17 +785,24 @@ export default function HomePage({
           movieGenresByIdRef.current[String(movieId)] ??
           movies.find((x) => String(x.id) === String(movieId))?.genres
       ),
-    [mergeForYouGenreNames, movies]
+    [mergeForYouGenreNames, movies, forYouRatingsDigest]
   );
 
-  const removeForYouGenre = useCallback(
+  const addForYouGenreFromTag = useCallback(
     async (name) => {
-      if (!accessToken) return;
-      const k = name.toLowerCase();
-      const prevFav = savedFavRef.current;
-      const prevExcl = savedExclRef.current;
-      const nextFav = prevFav.filter((g) => g.toLowerCase() !== k);
-      const nextExcl = prevExcl.some((e) => e.toLowerCase() === k) ? [...prevExcl] : [...prevExcl, name];
+      const cleanName = String(name || "").trim();
+      if (!cleanName || !accessToken) return;
+      const key = cleanName.toLowerCase();
+      const prevFav = [...savedFavRef.current];
+      const prevExcl = [...savedExclRef.current];
+      const nextFav = prevFav.some((g) => g.toLowerCase() === key) ? [...prevFav] : [...prevFav, cleanName];
+      const nextExcl = prevExcl.filter((g) => g.toLowerCase() !== key);
+      const changed =
+        nextFav.length !== prevFav.length || nextExcl.length !== prevExcl.length;
+      if (!changed) return;
+      prefsSyncGenRef.current += 1;
+      savedFavRef.current = nextFav;
+      savedExclRef.current = nextExcl;
       setSavedFavoriteGenres(nextFav);
       setSavedExcludedGenres(nextExcl);
       try {
@@ -632,10 +817,14 @@ export default function HomePage({
           }),
         });
         if (!res.ok) {
+          savedFavRef.current = prevFav;
+          savedExclRef.current = prevExcl;
           setSavedFavoriteGenres(prevFav);
           setSavedExcludedGenres(prevExcl);
         }
       } catch {
+        savedFavRef.current = prevFav;
+        savedExclRef.current = prevExcl;
         setSavedFavoriteGenres(prevFav);
         setSavedExcludedGenres(prevExcl);
       }
@@ -769,7 +958,7 @@ export default function HomePage({
     isAuthenticated,
     savedFavoriteGenres,
     savedExcludedGenres,
-    ratings,
+    forYouRatingsDigest,
     browseGenres,
     homeNav,
     browsePreset,
@@ -802,6 +991,9 @@ export default function HomePage({
           justify-content: space-between;
           padding: 0 40px;
           height: 64px;
+        }
+        .nav.nav--with-friends-rail {
+          padding-right: 96px;
         }
         .nav-logo {
           font-family: 'Bebas Neue', sans-serif;
@@ -847,6 +1039,8 @@ export default function HomePage({
           top: 44px;
           left: 0;
           width: min(420px, calc(100vw - 40px));
+          max-height: min(75vh, 560px);
+          overflow-y: auto;
           background: #121212;
           border: 1px solid #2a2a2a;
           border-radius: 12px;
@@ -881,7 +1075,22 @@ export default function HomePage({
         }
         .notif-approve { border-color: #2f6f95; color: #9fd4ff; }
         .notif-deny { border-color: #6a2e2e; color: #ff9d9d; }
-        .nav-links { display: flex; gap: 8px; }
+        .nav-links {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex: 1;
+          min-width: 0;
+          justify-content: flex-end;
+          overflow-x: auto;
+          overflow-y: hidden;
+          flex-wrap: nowrap;
+          scrollbar-width: thin;
+        }
+        .nav-links .nav-link {
+          flex-shrink: 0;
+          white-space: nowrap;
+        }
         .friend-card {
           background: #121212;
           border: 1px solid #232323;
@@ -1025,7 +1234,7 @@ export default function HomePage({
           top: 64px;
           right: 0;
           bottom: 0;
-          z-index: 85;
+          z-index: 110;
           display: flex;
           flex-direction: row-reverse;
           pointer-events: none;
@@ -1072,17 +1281,17 @@ export default function HomePage({
         }
         .friends-rail-handle-badge {
           position: absolute;
-          top: -3px;
-          right: -7px;
-          min-width: 17px;
-          height: 17px;
-          padding: 0 4px;
+          top: -2px;
+          right: -6px;
+          min-width: 15px;
+          height: 15px;
+          padding: 0 3px;
           border-radius: 999px;
           background: #2a2a2a;
           color: #888;
-          font-size: 9px;
+          font-size: 8px;
           font-weight: 700;
-          line-height: 17px;
+          line-height: 15px;
           text-align: center;
           border: 1px solid #3a3a3a;
         }
@@ -1184,6 +1393,10 @@ export default function HomePage({
           font-size: 12px;
           font-family: inherit;
         }
+        .friends-activity-select.active { color: #6ee7a8; border-color: #2ecc71; }
+        .friends-activity-select.away { color: #f1c40f; border-color: #b7950b; }
+        .friends-activity-select.busy { color: #ff9d9d; border-color: #c0392b; }
+        .friends-activity-select.invisible { color: #9a9a9a; border-color: #4a4a4a; }
         .friends-rail-list {
           overflow-y: auto;
           padding: 12px;
@@ -1253,7 +1466,17 @@ export default function HomePage({
           letter-spacing: 0.5px;
         }
         .nav-link:hover { color: #f0ece4; background: #1a1a1a; }
-        .nav-link.active { color: #e8c547; background: rgba(232,197,71,0.08); }
+        .nav-link--current {
+          color: #e8c547;
+          background: rgba(232, 197, 71, 0.08);
+        }
+        .nav-link:focus {
+          outline: none;
+        }
+        .nav-link:focus-visible {
+          outline: 2px solid #e8c547;
+          outline-offset: 2px;
+        }
 
         .friends-find-in-panel {
           display: flex;
@@ -1425,6 +1648,22 @@ export default function HomePage({
         }
         .foryou-meta {
           margin-bottom: 12px;
+          position: relative;
+          z-index: 3;
+        }
+        .foryou-meta.foryou-meta--below {
+          margin-top: 28px;
+          margin-bottom: 40px;
+          padding: 0 40px;
+          max-width: 1200px;
+          margin-left: auto;
+          margin-right: auto;
+        }
+        .foryou-inline-count {
+          font-size: 12px;
+          color: #7a7a7a;
+          margin: 0 0 10px;
+          text-align: right;
         }
         .foryou-guest-hint {
           font-size: 13px;
@@ -1475,6 +1714,9 @@ export default function HomePage({
           font-size: 12px;
           font-family: inherit;
           cursor: pointer;
+          touch-action: manipulation;
+          position: relative;
+          z-index: 1;
           transition: border-color 0.15s, color 0.15s, background 0.15s;
         }
         .foryou-taste-chip:hover {
@@ -1487,6 +1729,17 @@ export default function HomePage({
           font-weight: 700;
           line-height: 1;
           opacity: 0.75;
+        }
+        .foryou-taste-tag {
+          display: inline-flex;
+          align-items: center;
+          padding: 4px 10px;
+          border-radius: 999px;
+          border: 1px solid #3a3a3a;
+          background: #161616;
+          color: #c5a03a;
+          font-size: 12px;
+          font-family: inherit;
         }
         .genre-chip-row {
           display: flex;
@@ -1516,6 +1769,7 @@ export default function HomePage({
           padding: 6px 12px;
           font-size: 12px;
           cursor: pointer;
+          touch-action: manipulation;
           transition: border-color 0.2s, color 0.2s, background 0.2s;
         }
         .genre-pill:hover {
@@ -1593,9 +1847,13 @@ export default function HomePage({
           align-items: flex-end;
           padding: 16px;
           opacity: 0;
+          pointer-events: none;
           transition: opacity 0.25s;
         }
-        .movie-card:hover .card-overlay { opacity: 1; }
+        .movie-card:hover .card-overlay {
+          opacity: 1;
+          pointer-events: auto;
+        }
 
         .watchlist-btn {
           width: 100%;
@@ -1683,6 +1941,9 @@ export default function HomePage({
 
         @media (max-width: 600px) {
           .nav { padding: 0 20px; }
+          .nav.nav--with-friends-rail {
+            padding-right: 76px;
+          }
           .hero { padding: 48px 20px 36px; }
           .grid { padding: 0 20px 60px; }
           .section-header { padding: 0 20px; }
@@ -1694,12 +1955,16 @@ export default function HomePage({
             text-align: right;
           }
           .now-filters-wrap { padding: 0 20px 14px; }
+          .foryou-meta.foryou-meta--below {
+            padding-left: 20px;
+            padding-right: 20px;
+          }
           .expand-wrap { padding: 8px 20px 40px; }
         }
       `}</style>
 
       {/* NAV */}
-      <nav className="nav">
+      <nav className={`nav${showFriendsRail ? " nav--with-friends-rail" : ""}`}>
         <div className="nav-left">
           <button
             type="button"
@@ -1708,9 +1973,9 @@ export default function HomePage({
             onClick={() => setNotificationsOpen((prev) => !prev)}
           >
             🔔
-            {visibleInvites.length + visibleFriendRequests.length + visibleFriendNotifications.length > 0 ? (
+            {notificationBadgeCount > 0 ? (
               <span className="notif-badge">
-                {visibleInvites.length + visibleFriendRequests.length + visibleFriendNotifications.length}
+                {notificationBadgeCount}
               </span>
             ) : null}
           </button>
@@ -1720,7 +1985,7 @@ export default function HomePage({
               {visibleInvites.length === 0 ? (
                 <p className="notif-empty">No pending invites for you.</p>
               ) : (
-                visibleInvites.map((invite) => (
+                displayedInvites.map((invite) => (
                   <div key={invite.id} className="notif-item">
                     <div>
                       <p className="notif-main">You are invited to join</p>
@@ -1737,7 +2002,7 @@ export default function HomePage({
               {visibleFriendRequests.length === 0 ? (
                 <p className="notif-empty">No friend requests.</p>
               ) : (
-                visibleFriendRequests.map((req) => (
+                displayedFriendRequests.map((req) => (
                   <div key={req.id} className="notif-item">
                     <div>
                       <p className="notif-main">{req.requesterName} sent you a friend request</p>
@@ -1766,7 +2031,7 @@ export default function HomePage({
               {visibleFriendNotifications.length === 0 ? (
                 <p className="notif-empty">No friend alerts.</p>
               ) : (
-                visibleFriendNotifications.map((note) => (
+                displayedFriendNotifications.map((note) => (
                   <div key={note.id} className="notif-item">
                     <div>
                       <p className="notif-main">{note.message}</p>
@@ -1802,15 +2067,24 @@ export default function HomePage({
           </button>
         </div>
         <div className="nav-links">
-          {navItems.map((item) => (
-            <button
-              key={item}
-              className={`nav-link ${item === "Admin" ? "" : homeNav === item ? "active" : ""}`}
-              onClick={() => handleNavClick(item)}
-            >
-              {item}
-            </button>
-          ))}
+          {navItems.map((item) => {
+            const isCurrent = item !== "Admin" && item !== "Logout" && homeNav === item;
+            return (
+              <button
+                key={item}
+                type="button"
+                className={`nav-link${isCurrent ? " nav-link--current" : ""}`}
+                aria-current={isCurrent ? "page" : undefined}
+                onMouseDown={(event) => {
+                  if (event.button !== 0) return;
+                  event.preventDefault();
+                }}
+                onClick={() => handleNavClick(item)}
+              >
+                {item}
+              </button>
+            );
+          })}
         </div>
       </nav>
 
@@ -1865,6 +2139,10 @@ export default function HomePage({
                 className={`now-filter-tab ${browsePreset === p.id ? "active" : ""}`}
                 title={p.title}
                 onClick={() => {
+                  const chip = selectedGenreName == null ? "" : String(selectedGenreName).trim();
+                  if (p.id === "foryou" && chip && isAuthenticated && accessToken) {
+                    void addForYouGenreFromTag(chip);
+                  }
                   setBrowsePreset(p.id);
                   setSelectedGenreName(null);
                 }}
@@ -1873,40 +2151,53 @@ export default function HomePage({
               </button>
             ))}
           </div>
-          {homeNav === "Home" && !query.trim() && browsePreset === "foryou" ? (
-            <div className="foryou-meta">
-              {!isAuthenticated ? (
-                <p className="foryou-guest-hint">
-                  <strong>For you</strong> uses your saved favorite genres and titles you rate 4★ or higher.{" "}
-                  <button type="button" className="foryou-login-link" onClick={() => onNavigate("login")}>
-                    Log in
-                  </button>{" "}
-                  to personalize this list. Until then, you will see the same broad picks as Trending.
+          {browsePreset === "foryou" && isHomeBrowse ? (
+            <p className="foryou-inline-count">
+              {filtered.length > HOME_PAGE_CHUNK
+                ? `${displayedMovies.length} of ${filtered.length} movies`
+                : `${filtered.length} movies`}
+            </p>
+          ) : null}
+          {browsePreset !== "foryou" ? (
+            <div className="genre-chips-section">
+              <div className="genre-chip-head-row">
+                <p className="genre-chip-hint">
+                  Pick a list above, then narrow with genre or theme chips — scroll sideways for more.
                 </p>
-              ) : forYouTasteLabels.length > 0 ? (
-                <div className="foryou-taste-line" role="group" aria-label="Your For you mix">
-                  <span className="foryou-taste-label">Your For you mix</span>
-                  {forYouTasteLabels.map((name, idx) => (
-                    <button
-                      key={`${name}-${idx}`}
-                      type="button"
-                      className="foryou-taste-chip"
-                      onClick={() => removeForYouGenre(name)}
-                      aria-label={`Remove ${name} from your For you mix`}
-                    >
-                      {name}
-                      <span className="foryou-taste-chip-x" aria-hidden>
-                        ×
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="foryou-taste-line foryou-taste-muted">
-                  Add favorite genres to your account or rate any title here 4★+—until then, we are showing general
-                  trending-style picks.
-                </div>
-              )}
+                <span className="result-count result-count--genre-corner">
+                  {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK
+                    ? `${displayedMovies.length} of ${filtered.length} movies`
+                    : `${filtered.length} movies`}
+                </span>
+              </div>
+              <div className="genre-chip-row">
+                {[...(browseGenres.length ? browseGenres : [])]
+                  .sort((a, b) => a.name.localeCompare(b.name))
+                  .filter((g) => String(g.name || "").trim())
+                  .map((g) => {
+                    const label = String(g.name || "").trim();
+                    const selectedTrim =
+                      selectedGenreName == null ? "" : String(selectedGenreName).trim();
+                    const isActive = Boolean(label && selectedTrim === label);
+                    return (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className={`genre-pill ${isActive ? "active" : ""}`}
+                        onClick={() => {
+                          if (!label) return;
+                          const wasActive = isActive;
+                          setSelectedGenreName(wasActive ? null : label);
+                          if (isAuthenticated && accessToken && !wasActive) {
+                            void addForYouGenreFromTag(label);
+                          }
+                        }}
+                      >
+                        {g.name.trim()}
+                      </button>
+                    );
+                  })}
+              </div>
             </div>
           ) : null}
           <div className="genre-chips-section">
@@ -1954,7 +2245,7 @@ export default function HomePage({
             <MovieCard
               key={movie.id}
               movie={movie}
-              userRating={ratings[movie.id]}
+              userRating={ratings[String(movie.id)] ?? ratings[movie.id]}
               inWatchlist={watchlistIds.includes(String(movie.id))}
               onRate={handleRate}
               onWatchlist={handleWatchlist}
@@ -1964,6 +2255,34 @@ export default function HomePage({
           ))
         )}
       </div>
+
+      {homeNav === "Home" && !query.trim() && browsePreset === "foryou" ? (
+        <div className="foryou-meta foryou-meta--below">
+          {!isAuthenticated ? (
+            <p className="foryou-guest-hint">
+              <strong>For you</strong> uses your saved favorite genres and titles you rate 4★ or higher.{" "}
+              <button type="button" className="foryou-login-link" onClick={() => onNavigate("login")}>
+                Log in
+              </button>{" "}
+              to personalize this list. Until then, you will see the same broad picks as Trending.
+            </p>
+          ) : forYouTasteLabels.length > 0 ? (
+            <div className="foryou-taste-line" role="group" aria-label="Your For you mix">
+              <span className="foryou-taste-label">Your For you mix</span>
+              {forYouTasteLabels.map((name, idx) => (
+                <span key={`${name}-${idx}`} className="foryou-taste-tag">
+                  {name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <div className="foryou-taste-line foryou-taste-muted">
+              Add favorite genres to your account or rate any title here 4★+—until then, we are showing general
+              trending-style picks.
+            </div>
+          )}
+        </div>
+      ) : null}
 
       {isHomeBrowse && filtered.length > HOME_PAGE_CHUNK ? (
         <div className="expand-wrap">
@@ -2040,11 +2359,12 @@ export default function HomePage({
             <div className="friends-activity-row">
               <span className="friends-activity-label">Your status</span>
               <select
-                className="friends-activity-select"
+                className={`friends-activity-select ${myActivityStatus}`}
                 value={myActivityStatus}
                 onChange={(event) => {
                   const nextStatus = normalizeActivityStatus(event.target.value);
                   const prevStatus = myActivityStatus;
+                  prefsSyncGenRef.current += 1;
                   setMyActivityStatus(nextStatus);
                   if (!accessToken) return;
                   fetch("http://localhost:3000/api/v1/users/me", {

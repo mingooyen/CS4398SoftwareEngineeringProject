@@ -144,7 +144,7 @@ export function buildOfflineMovies(genreNames = [], limit = 50, offlineSort = "d
     out.push(m);
   }
   const base = "https://image.tmdb.org/t/p/w500";
-  return out.slice(0, cap).map((m, i) => {
+  return out.slice(0, cap).map((m) => {
     const path = m.posterPath?.trim();
     const poster =
       path && !/^https?:\/\//i.test(path)
@@ -153,7 +153,7 @@ export function buildOfflineMovies(genreNames = [], limit = 50, offlineSort = "d
           ? path
           : null;
     return {
-      id: m.id * 1000 + i,
+      id: m.id,
       title: m.title,
       year: m.year,
       rating: m.rating,

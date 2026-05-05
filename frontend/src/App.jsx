@@ -137,6 +137,8 @@ function App() {
             if (meta?.homeTab) {
               const tab = meta.homeTab === "Watchlist" && !isAuthed ? "Home" : meta.homeTab;
               setHomeNav(tab);
+            } else if (next === "group-detail" || next === "home" || next === "login" || next === "signup") {
+              setHomeNav("Home");
             }
             if (next === "group-detail") {
               setGroupDetailId(String(meta?.groupId ?? ""));
@@ -181,6 +183,8 @@ function App() {
             if (meta?.homeTab) {
               const tab = meta.homeTab === "Watchlist" && !isAuthed ? "Home" : meta.homeTab;
               setHomeNav(tab);
+            } else if (next === "group" || next === "home" || next === "login" || next === "signup") {
+              setHomeNav("Home");
             }
             if (next === "group") {
               setGroupPageOpts({ scrollToMyGroups: Boolean(meta?.scrollToMyGroups) });
@@ -223,6 +227,13 @@ function App() {
         if (meta?.homeTab) {
           const tab = meta.homeTab === "Watchlist" && !isAuthed ? "Home" : meta.homeTab;
           setHomeNav(tab);
+        } else if (
+          nextPage === "group" ||
+          nextPage === "group-detail" ||
+          nextPage === "login" ||
+          nextPage === "signup"
+        ) {
+          setHomeNav("Home");
         }
         if (nextPage === "signup" || nextPage === "login") {
           setAuthMode(nextPage);
